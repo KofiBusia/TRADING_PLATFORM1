@@ -455,7 +455,11 @@ def is_admin():
 @app.route("/")
 def index():
     if "user_id" not in session:
-        return redirect(url_for("login"))
+        # Serve the login page directly at "/" (HTTP 200) rather than a
+        # redirect — link-preview crawlers (WhatsApp, iMessage, X, Slack)
+        # generally don't follow redirects to find Open Graph tags, so the
+        # shared root URL needs to return real content on the first hit.
+        return render_template("login.html")
     return render_template("index.html", username=session.get("username"))
 
 
