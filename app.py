@@ -8,21 +8,41 @@ import time
 import json
 import urllib.request
 import os
+import tempfile
+from datetime import timedelta
 from html.parser import HTMLParser
 
 app = Flask(__name__, instance_relative_config=True)
 app.secret_key = os.environ.get('SECRET_KEY', 'yin_tradesim_secret_2025_change_me')
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=30)
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 # ─────────────────────────────────────────────
 # Persistent user storage
-# Uses /tmp on Render (always writable) with a fallback to instance folder
+# Preference order:
+#   1. DATA_DIR env var (point this at a mounted persistent disk, e.g. on Render)
+#   2. Flask's instance folder (works out of the box on Windows/macOS/Linux dev)
+#   3. The OS temp dir as a last-resort fallback
 # ─────────────────────────────────────────────
 def _get_users_path():
-    # /tmp is always writable on every platform including Render
-    tmp_path = '/tmp/yin_users_data.json'
-    return tmp_path
+    data_dir = os.environ.get('DATA_DIR')
+    if data_dir:
+        try:
+            os.makedirs(data_dir, exist_ok=True)
+            return os.path.join(data_dir, 'yin_users_data.json')
+        except OSError as e:
+            print(f"[WARN] DATA_DIR '{data_dir}' not usable: {e}")
+
+    try:
+        os.makedirs(app.instance_path, exist_ok=True)
+        return os.path.join(app.instance_path, 'yin_users_data.json')
+    except OSError as e:
+        print(f"[WARN] instance path not usable: {e}")
+
+    return os.path.join(tempfile.gettempdir(), 'yin_users_data.json')
 
 USERS_FILE = _get_users_path()
+print(f"[INFO] User data file: {USERS_FILE}")
 
 def load_users():
     if os.path.exists(USERS_FILE):
@@ -48,31 +68,51 @@ users = load_users()
 admin_password = os.environ.get('ADMIN_PASSWORD', 'admin123')
 
 # ─────────────────────────────────────────────
-# GSE stock universe (updated prices March 2026)
+# GSE stock universe — full official listing (39 companies:
+# 34 Main Market + 5 GAX). Symbols/names/sectors sourced from the
+# exchange's public listings; prices seeded from live GSE data and
+# then kept current by update_prices_with_real_data().
 # ─────────────────────────────────────────────
 stocks = [
-    {"symbol": "ACCESS", "name": "Access Bank Ghana PLC",           "price": 17.80, "sector": "Financial Services", "history": []},
-    {"symbol": "ADB",    "name": "Agricultural Development Bank PLC","price": 5.06,  "sector": "Financial Services", "history": []},
-    {"symbol": "ASG",    "name": "Asante Gold Corporation",          "price": 8.89,  "sector": "Mining",            "history": []},
-    {"symbol": "ALLGH",  "name": "Atlantic Lithium Ltd",             "price": 6.12,  "sector": "Mining",            "history": []},
-    {"symbol": "BOPP",   "name": "Benso Palm Plantation PLC",        "price": 26.31, "sector": "Agriculture",       "history": []},
-    {"symbol": "CAL",    "name": "Cal Bank PLC",                     "price": 0.64,  "sector": "Financial Services", "history": []},
-    {"symbol": "EGH",    "name": "Ecobank Ghana PLC",                "price": 6.30,  "sector": "Financial Services", "history": []},
-    {"symbol": "EGL",    "name": "Enterprise Group PLC",             "price": 2.05,  "sector": "Insurance",         "history": []},
-    {"symbol": "ETI",    "name": "Ecobank Transnational Inc.",        "price": 2.45,  "sector": "Financial Services", "history": []},
-    {"symbol": "FML",    "name": "Fan Milk PLC",                     "price": 3.70,  "sector": "Consumer Goods",    "history": []},
-    {"symbol": "GCB",    "name": "GCB Bank PLC",                     "price": 6.51,  "sector": "Financial Services", "history": []},
-    {"symbol": "GGBL",   "name": "Guinness Ghana Breweries PLC",     "price": 8.45,  "sector": "Consumer Goods",    "history": []},
-    {"symbol": "GOIL",   "name": "Ghana Oil Company PLC",            "price": 1.60,  "sector": "Energy",            "history": []},
-    {"symbol": "MAC",    "name": "Mega African Capital PLC",         "price": 5.20,  "sector": "Financial Services", "history": []},
-    {"symbol": "MTNGH",  "name": "Scancom PLC (MTN Ghana)",          "price": 3.10,  "sector": "Telecom",           "history": []},
-    {"symbol": "RBGH",   "name": "Republic Bank (Ghana) PLC",        "price": 0.65,  "sector": "Financial Services", "history": []},
-    {"symbol": "SCB",    "name": "Standard Chartered Bank Gh. PLC",  "price": 25.02, "sector": "Financial Services", "history": []},
-    {"symbol": "SIC",    "name": "SIC Insurance Company PLC",        "price": 0.37,  "sector": "Insurance",         "history": []},
-    {"symbol": "SOGEGH", "name": "Societe Generale Ghana PLC",       "price": 1.50,  "sector": "Financial Services", "history": []},
-    {"symbol": "TOTAL",  "name": "TotalEnergies Marketing Ghana PLC","price": 16.47, "sector": "Energy",            "history": []},
-    {"symbol": "TLW",    "name": "Tullow Oil PLC",                   "price": 11.92, "sector": "Energy",            "history": []},
-    {"symbol": "UNIL",   "name": "Unilever Ghana PLC",               "price": 19.50, "sector": "Consumer Goods",    "history": []},
+    {"symbol": "AADS",     "name": "AngloGold Ashanti Depositary Shares", "price": 0.42,   "sector": "Mining",              "market": "Main", "history": []},
+    {"symbol": "ACCESS",   "name": "Access Bank Ghana PLC",               "price": 20.67,  "sector": "Banking",             "market": "Main", "history": []},
+    {"symbol": "ADB",      "name": "Agricultural Development Bank PLC",   "price": 5.30,   "sector": "Banking",             "market": "Main", "history": []},
+    {"symbol": "AGA",      "name": "AngloGold Ashanti Limited",           "price": 37.00,  "sector": "Mining",              "market": "Main", "history": []},
+    {"symbol": "ALLGH",    "name": "Atlantic Lithium Ltd",                "price": 5.30,   "sector": "Mining",              "market": "Main", "history": []},
+    {"symbol": "ASG",      "name": "Asante Gold Corporation",             "price": 8.89,   "sector": "Mining",              "market": "Main", "history": []},
+    {"symbol": "BOPP",     "name": "Benso Oil Palm Plantation Ltd",       "price": 75.00,  "sector": "Agriculture",         "market": "Main", "history": []},
+    {"symbol": "CAL",      "name": "CalBank PLC",                        "price": 0.70,   "sector": "Banking",             "market": "Main", "history": []},
+    {"symbol": "CLYD",     "name": "Clydestone (Ghana) Limited",          "price": 4.70,   "sector": "ICT",                 "market": "Main", "history": []},
+    {"symbol": "CMLT",     "name": "Camelot Ghana Limited",               "price": 0.14,   "sector": "Manufacturing",       "market": "Main", "history": []},
+    {"symbol": "CPC",      "name": "Cocoa Processing Company Limited",    "price": 0.24,   "sector": "Manufacturing",       "market": "Main", "history": []},
+    {"symbol": "DASPHARMA","name": "Dannex Ayrton Starwin PLC",           "price": 1.19,   "sector": "Pharmaceuticals",     "market": "Main", "history": []},
+    {"symbol": "DIGICUT",  "name": "Digicut Production & Advertising Ltd","price": 0.42,   "sector": "Media & Advertising", "market": "GAX",  "history": []},
+    {"symbol": "EGH",      "name": "Ecobank Ghana PLC",                   "price": 38.00,  "sector": "Banking",             "market": "Main", "history": []},
+    {"symbol": "EGL",      "name": "Enterprise Group PLC",                "price": 7.00,   "sector": "Insurance",           "market": "Main", "history": []},
+    {"symbol": "ETI",      "name": "Ecobank Transnational Incorporated",  "price": 1.62,   "sector": "Banking",             "market": "Main", "history": []},
+    {"symbol": "FAB",      "name": "First Atlantic Bank Limited",         "price": 8.40,   "sector": "Banking",             "market": "Main", "history": []},
+    {"symbol": "FML",      "name": "Fan Milk PLC",                        "price": 14.02,  "sector": "Food & Beverage",     "market": "Main", "history": []},
+    {"symbol": "GCB",      "name": "GCB Bank PLC",                        "price": 40.00,  "sector": "Banking",             "market": "Main", "history": []},
+    {"symbol": "GGBL",     "name": "Guinness Ghana Breweries PLC",        "price": 10.70,  "sector": "Food & Beverage",     "market": "Main", "history": []},
+    {"symbol": "GLD",      "name": "NewGold Issuer Limited (ETF)",        "price": 462.38, "sector": "ETF",                 "market": "Main", "history": []},
+    {"symbol": "GOIL",     "name": "Ghana Oil Company PLC",               "price": 6.10,   "sector": "Energy",              "market": "Main", "history": []},
+    {"symbol": "HORDS",    "name": "Hords Limited",                       "price": 0.61,   "sector": "Financial Services",  "market": "GAX",  "history": []},
+    {"symbol": "IIL",      "name": "Intravenous Infusions PLC",           "price": 0.53,   "sector": "Pharmaceuticals",     "market": "GAX",  "history": []},
+    {"symbol": "KASA",     "name": "Kasapreko Company PLC",               "price": 1.82,   "sector": "Food & Beverage",     "market": "Main", "history": []},
+    {"symbol": "MAC",      "name": "Mega African Capital PLC",            "price": 5.20,   "sector": "Financial Services",  "market": "Main", "history": []},
+    {"symbol": "MMH",      "name": "Meridian-Marshalls Holdings",         "price": 0.12,   "sector": "Financial Services",  "market": "GAX",  "history": []},
+    {"symbol": "MTNGH",    "name": "Scancom PLC (MTN Ghana)",             "price": 6.68,   "sector": "ICT",                 "market": "Main", "history": []},
+    {"symbol": "RBGH",     "name": "Republic Bank (Ghana) PLC",           "price": 4.04,   "sector": "Banking",             "market": "Main", "history": []},
+    {"symbol": "SAMBA",    "name": "Samba Foods Limited",                 "price": 0.55,   "sector": "Food & Beverage",     "market": "GAX",  "history": []},
+    {"symbol": "SCB",      "name": "Standard Chartered Bank Ghana PLC",   "price": 69.89,  "sector": "Banking",             "market": "Main", "history": []},
+    {"symbol": "SCBPREF",  "name": "Standard Chartered Bank Gh. (Pref.)", "price": 0.99,   "sector": "Banking",             "market": "Main", "history": []},
+    {"symbol": "SIC",      "name": "SIC Insurance Company PLC",           "price": 5.43,   "sector": "Insurance",           "market": "Main", "history": []},
+    {"symbol": "SOGEGH",   "name": "Societe Generale Ghana PLC",          "price": 5.60,   "sector": "Banking",             "market": "Main", "history": []},
+    {"symbol": "TBL",      "name": "Trust Bank Limited (Gambia)",         "price": 1.20,   "sector": "Banking",             "market": "Main", "history": []},
+    {"symbol": "TLW",      "name": "Tullow Oil PLC",                      "price": 13.11,  "sector": "Energy",              "market": "Main", "history": []},
+    {"symbol": "TOTAL",    "name": "TotalEnergies Marketing Ghana PLC",   "price": 37.80,  "sector": "Energy",              "market": "Main", "history": []},
+    {"symbol": "UNIL",     "name": "Unilever Ghana PLC",                  "price": 40.00,  "sector": "Consumer Goods",      "market": "Main", "history": []},
+    {"symbol": "ZEN",      "name": "ZEN Petroleum Holdings PLC",          "price": 9.01,   "sector": "Energy",              "market": "Main", "history": []},
 ]
 
 stock_lock  = threading.Lock()
@@ -235,58 +275,62 @@ def fetch_gse_api():
 
 
 def update_prices_with_real_data():
-    real = fetch_gse_afx() or fetch_gse_api()
+    # dev.kwayisi.org/apis/gse/live is the primary source; the AFX table
+    # scrape is a fallback if that API is ever unreachable.
+    real = fetch_gse_api() or fetch_gse_afx()
     if not real:
         return False
     with stock_lock:
         updated = 0
         for stock in stocks:
             match = next((r for r in real if r['symbol'] == stock['symbol']), None)
-            if match:
+            if match and match['price'] > 0:
                 stock['price'] = match['price']
                 stock['history'].append({"time": datetime.now().isoformat(), "price": stock['price']})
                 if len(stock['history']) > 100:
                     stock['history'].pop(0)
                 updated += 1
-    print(f"[INFO] Updated {updated} stocks from real GSE data")
-    return True
+    print(f"[INFO] Updated {updated} stocks from live GSE data")
+    return updated > 0
+
+
+def simulate_price_tick():
+    """Small random walk, used only when the live GSE feed can't be reached."""
+    with stock_lock:
+        ts = datetime.now().isoformat()
+        for stock in stocks:
+            if stock["price"] > 0:
+                stock["price"] = max(0.01, round(
+                    stock["price"] * (1 + random.uniform(-0.02, 0.02)), 2))
+                stock["history"].append({"time": ts, "price": stock["price"]})
+                if len(stock["history"]) > 100:
+                    stock["history"].pop(0)
+
+
+PRICE_UPDATE_INTERVAL = 40  # seconds — matches the GSE live feed refresh cadence
 
 
 def update_prices():
-    last_real = 0
-    real_interval = 30
+    last_update = 0
     while True:
-        time.sleep(10)
-        if market_open:
-            now = time.time()
-            if now - last_real >= real_interval:
-                if update_prices_with_real_data():
-                    last_real = now
-                    sl = apply_stop_losses()
-                    pt = check_price_targets()
-                    app.recent_alerts['stop_loss'].extend(sl)
-                    app.recent_alerts['price_target'].extend(pt)
-                    app.recent_alerts['stop_loss']    = app.recent_alerts['stop_loss'][-50:]
-                    app.recent_alerts['price_target'] = app.recent_alerts['price_target'][-50:]
-                    continue
+        time.sleep(1)
+        if not market_open:
+            continue
 
-            # Simulated ±2% tick
-            with stock_lock:
-                ts = datetime.now().isoformat()
-                for stock in stocks:
-                    if stock["price"] > 0:
-                        stock["price"] = max(0.01, round(
-                            stock["price"] * (1 + random.uniform(-0.02, 0.02)), 2))
-                        stock["history"].append({"time": ts, "price": stock["price"]})
-                        if len(stock["history"]) > 100:
-                            stock["history"].pop(0)
+        now = time.time()
+        if now - last_update < PRICE_UPDATE_INTERVAL:
+            continue
+        last_update = now
 
-            sl = apply_stop_losses()
-            pt = check_price_targets()
-            app.recent_alerts['stop_loss'].extend(sl)
-            app.recent_alerts['price_target'].extend(pt)
-            app.recent_alerts['stop_loss']    = app.recent_alerts['stop_loss'][-50:]
-            app.recent_alerts['price_target'] = app.recent_alerts['price_target'][-50:]
+        if not update_prices_with_real_data():
+            simulate_price_tick()
+
+        sl = apply_stop_losses()
+        pt = check_price_targets()
+        app.recent_alerts['stop_loss'].extend(sl)
+        app.recent_alerts['price_target'].extend(pt)
+        app.recent_alerts['stop_loss']    = app.recent_alerts['stop_loss'][-50:]
+        app.recent_alerts['price_target'] = app.recent_alerts['price_target'][-50:]
 
 # ─────────────────────────────────────────────
 # Auth helpers
@@ -321,6 +365,7 @@ def login():
 
         # Check admin login
         if username == "admin" and password == admin_password:
+            session.permanent   = True
             session["user_id"]  = "admin"
             session["username"] = "admin"
             session["is_admin"] = True
@@ -354,6 +399,7 @@ def login():
                 user["password"] = generate_password_hash(password)
                 save_users()
 
+        session.permanent   = True
         session["user_id"]  = user["id"]
         session["username"] = username
         session["is_admin"] = False
@@ -419,6 +465,7 @@ def signup():
             if not saved:
                 print(f"[WARN] Could not persist user {username} to disk")
 
+            session.permanent   = True
             session["user_id"]  = user_id
             session["username"] = username
             session["is_admin"] = False

@@ -633,6 +633,7 @@
       .filter-tabs {
         display: flex;
         gap: 4px;
+        flex-wrap: wrap;
       }
       .filter-tab {
         padding: 4px 10px;
@@ -1551,30 +1552,12 @@
                   id="stock-search"
                   oninput="filterStocks()"
                 />
-                <div class="filter-tabs">
+                <div class="filter-tabs" id="sector-filter-tabs">
                   <div
                     class="filter-tab active"
                     onclick="setSectorFilter('all', this)"
                   >
                     All
-                  </div>
-                  <div
-                    class="filter-tab"
-                    onclick="setSectorFilter('Financial Services', this)"
-                  >
-                    Finance
-                  </div>
-                  <div
-                    class="filter-tab"
-                    onclick="setSectorFilter('Energy', this)"
-                  >
-                    Energy
-                  </div>
-                  <div
-                    class="filter-tab"
-                    onclick="setSectorFilter('Mining', this)"
-                  >
-                    Mining
                   </div>
                 </div>
               </div>
@@ -1984,6 +1967,7 @@
       let currentTradeMode = "buy";
       let sectorFilter = "all";
       let prevPrices = {};
+      let renderedSectors = null;
       const USERNAME = "{{ username }}";
 
       // ===== INIT =====
@@ -2004,6 +1988,7 @@
           const r = await fetch("/api/stocks");
           const data = await r.json();
           stocksData = data;
+          renderSectorTabs();
           renderStocksTable();
           renderTicker();
           updateMarketStatus(data[0]?.market_open ?? false);
@@ -2350,6 +2335,31 @@
           viewTitles[name] || name;
         // Load leaderboard fresh when switching to it
         if (name === "leaderboard") fetchLeaderboard();
+      }
+
+      function renderSectorTabs() {
+        const sectors = [...new Set(stocksData.map((s) => s.sector))].sort();
+        const key = sectors.join("|");
+        if (key === renderedSectors) return;
+        renderedSectors = key;
+
+        const wrap = document.getElementById("sector-filter-tabs");
+        const activeSector = sectorFilter;
+        wrap.innerHTML =
+          `<div class="filter-tab${
+            activeSector === "all" ? " active" : ""
+          }" onclick="setSectorFilter('all', this)">All</div>` +
+          sectors
+            .map(
+              (sec) =>
+                `<div class="filter-tab${
+                  activeSector === sec ? " active" : ""
+                }" onclick="setSectorFilter('${sec.replace(
+                  /'/g,
+                  "\\'"
+                )}', this)">${sec}</div>`
+            )
+            .join("");
       }
 
       function setSectorFilter(sector, el) {
