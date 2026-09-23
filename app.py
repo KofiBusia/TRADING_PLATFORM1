@@ -12,6 +12,12 @@ import tempfile
 from datetime import timedelta
 from html.parser import HTMLParser
 
+try:
+    import psycopg2
+    import psycopg2.extras
+except ImportError:
+    psycopg2 = None
+
 app = Flask(__name__, instance_relative_config=True)
 app.secret_key = os.environ.get('SECRET_KEY', 'yin_tradesim_secret_2025_change_me')
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=30)
@@ -19,11 +25,55 @@ app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 # ─────────────────────────────────────────────
 # Persistent user storage
-# Preference order:
-#   1. DATA_DIR env var (point this at a mounted persistent disk, e.g. on Render)
-#   2. Flask's instance folder (works out of the box on Windows/macOS/Linux dev)
-#   3. The OS temp dir as a last-resort fallback
+#
+# Primary: Postgres (DATABASE_URL env var) — survives restarts, redeploys,
+# and Render's free-tier idle spin-downs, unlike anything on local disk.
+#
+# Fallback (only when DATABASE_URL isn't set, e.g. local dev): a JSON file,
+# preferring DATA_DIR -> Flask's instance folder -> the OS temp dir.
 # ─────────────────────────────────────────────
+DATABASE_URL = os.environ.get('DATABASE_URL')
+
+
+def _pg_connect():
+    if not psycopg2 or not DATABASE_URL:
+        return None
+    try:
+        return psycopg2.connect(DATABASE_URL, connect_timeout=8)
+    except psycopg2.OperationalError:
+        try:
+            return psycopg2.connect(DATABASE_URL, connect_timeout=8, sslmode='require')
+        except psycopg2.OperationalError as e:
+            print(f"[ERROR] Could not connect to Postgres: {e}")
+            return None
+
+
+def _pg_init():
+    conn = _pg_connect()
+    if not conn:
+        return False
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS gse_tradesim_users (
+                    username      TEXT PRIMARY KEY,
+                    id            TEXT NOT NULL,
+                    password      TEXT NOT NULL,
+                    registered_at TEXT NOT NULL,
+                    portfolio     JSONB NOT NULL
+                )
+            """)
+        return True
+    except Exception as e:
+        print(f"[ERROR] Could not initialize Postgres schema: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+USE_POSTGRES = _pg_init()
+
+
 def _get_users_path():
     data_dir = os.environ.get('DATA_DIR')
     if data_dir:
@@ -42,9 +92,40 @@ def _get_users_path():
     return os.path.join(tempfile.gettempdir(), 'yin_users_data.json')
 
 USERS_FILE = _get_users_path()
-print(f"[INFO] User data file: {USERS_FILE}")
+
+if USE_POSTGRES:
+    print("[INFO] User storage: Postgres (persistent)")
+else:
+    print(f"[INFO] User storage: JSON file at {USERS_FILE} (local dev fallback — set DATABASE_URL for real persistence)")
+
 
 def load_users():
+    if USE_POSTGRES:
+        conn = _pg_connect()
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT username, id, password, registered_at, portfolio FROM gse_tradesim_users")
+                    rows = cur.fetchall()
+                data = {
+                    username: {
+                        "id": uid,
+                        "username": username,
+                        "password": password,
+                        "registered_at": registered_at,
+                        "portfolio": portfolio,
+                    }
+                    for username, uid, password, registered_at, portfolio in rows
+                }
+                print(f"[INFO] Loaded {len(data)} users from Postgres")
+                return data
+            except Exception as e:
+                print(f"[ERROR] Could not load users from Postgres: {e}")
+                return {}
+            finally:
+                conn.close()
+        return {}
+
     if os.path.exists(USERS_FILE):
         try:
             with open(USERS_FILE, 'r') as f:
@@ -56,6 +137,27 @@ def load_users():
     return {}
 
 def save_users():
+    if USE_POSTGRES:
+        conn = _pg_connect()
+        if not conn:
+            return False
+        try:
+            with conn, conn.cursor() as cur:
+                cur.execute("DELETE FROM gse_tradesim_users")
+                for username, u in users.items():
+                    cur.execute(
+                        """INSERT INTO gse_tradesim_users (username, id, password, registered_at, portfolio)
+                           VALUES (%s, %s, %s, %s, %s)""",
+                        (username, u["id"], u["password"], u["registered_at"],
+                         psycopg2.extras.Json(u["portfolio"])),
+                    )
+            return True
+        except Exception as e:
+            print(f"[ERROR] Could not save users to Postgres: {e}")
+            return False
+        finally:
+            conn.close()
+
     try:
         with open(USERS_FILE, 'w') as f:
             json.dump(users, f, indent=2)
