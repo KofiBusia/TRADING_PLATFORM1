@@ -409,7 +409,7 @@ def simulate_price_tick():
                     stock["history"].pop(0)
 
 
-PRICE_UPDATE_INTERVAL = 40  # seconds — matches the GSE live feed refresh cadence
+PRICE_UPDATE_INTERVAL = 30  # seconds
 
 
 def update_prices():
