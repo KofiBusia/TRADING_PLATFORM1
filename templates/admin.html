@@ -617,6 +617,20 @@
         transform: translateY(-1px);
         box-shadow: 0 6px 20px rgba(46, 159, 212, 0.3);
       }
+      .btn-secondary {
+        padding: 10px 18px;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid var(--border-strong);
+        border-radius: 8px;
+        color: var(--white);
+        font-size: 12px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+      .btn-secondary:hover {
+        background: rgba(255, 255, 255, 0.12);
+      }
       .search-bar {
         background: rgba(255, 255, 255, 0.05);
         border: 1px solid var(--border);
@@ -1414,6 +1428,48 @@
               </p>
             </div>
           </div>
+          <!-- Session Timer -->
+          <div class="control-card">
+            <div class="control-card-title">⏱ Session Timer</div>
+            <div class="control-card-desc">
+              Start a 10-minute countdown shown on every user's screen. It
+              blinks in the last 30 seconds. Reset restarts it at 10:00;
+              Stop hides it for everyone.
+            </div>
+            <div class="status-box">
+              <div class="status-box-label">Time Remaining</div>
+              <div
+                class="status-box-value"
+                id="timer-status"
+                style="color: var(--gray)"
+              >
+                Not running
+              </div>
+            </div>
+            <div style="display: flex; gap: 10px">
+              <button
+                class="btn-primary"
+                onclick="setSessionTimer('start')"
+                style="flex: 1"
+              >
+                ▶ Start
+              </button>
+              <button
+                class="btn-secondary"
+                onclick="setSessionTimer('reset')"
+                style="flex: 1"
+              >
+                ↺ Reset
+              </button>
+              <button
+                class="btn-danger-full"
+                onclick="setSessionTimer('stop')"
+                style="flex: 1"
+              >
+                ■ Stop
+              </button>
+            </div>
+          </div>
           <!-- Quick actions -->
           <div class="control-card">
             <div class="control-card-title">📋 Quick Actions</div>
@@ -2071,6 +2127,47 @@
         }
       }
 
+      // ══ SESSION TIMER ══
+      async function setSessionTimer(action) {
+        try {
+          const r = await fetch("/api/admin/timer", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action }),
+          });
+          const d = await r.json();
+          if (d.success) {
+            refreshTimerStatus();
+            showToast(d.message, action === "stop" ? "warning" : "success");
+            addLog("timer", d.message);
+          } else {
+            showToast(d.error || "Failed", "error");
+          }
+        } catch (e) {
+          showToast("Network error", "error");
+        }
+      }
+
+      async function refreshTimerStatus() {
+        const el = document.getElementById("timer-status");
+        if (!el) return;
+        try {
+          const r = await fetch("/api/timer");
+          const d = await r.json();
+          if (!d.active) {
+            el.textContent = "Not running";
+            el.style.color = "var(--gray)";
+            return;
+          }
+          const m = Math.floor(d.remaining / 60);
+          const s = d.remaining % 60;
+          el.textContent = `${m}:${String(s).padStart(2, "0")}`;
+          el.style.color = d.remaining <= 30 ? "var(--red)" : "var(--green)";
+        } catch (e) {}
+      }
+      setInterval(refreshTimerStatus, 3000);
+      refreshTimerStatus();
+
       // ══ USER DETAIL ══
       async function viewUser(username) {
         document.getElementById("ud-modal-title").textContent =
@@ -2249,7 +2346,7 @@
           el.innerHTML = `<div style="text-align:center;padding:30px;color:var(--gray)"><div style="font-size:32px;margin-bottom:8px">📋</div><div style="font-size:13px">No activity yet.</div></div>`;
           return;
         }
-        const icons = { market: "🏪", user: "👤", danger: "⚠️", stock: "📈" };
+        const icons = { market: "🏪", user: "👤", danger: "⚠️", stock: "📈", timer: "⏱" };
         el.innerHTML = activityLog
           .map(
             (l) => `

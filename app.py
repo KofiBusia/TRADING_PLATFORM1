@@ -1066,6 +1066,43 @@ def market_control():
         return jsonify({"success": True, "message": "Market closed", "market_open": False})
     return jsonify({"error": "Use 'open' or 'close'"}), 400
 
+
+# ─────────────────────────────────────────────
+# Session timer — admin-controlled countdown shown on every user's page
+# ─────────────────────────────────────────────
+SESSION_TIMER_DURATION = 600  # 10 minutes
+
+session_timer = {"active": False, "start_time": None}
+
+
+@app.route("/api/timer")
+def get_session_timer():
+    remaining = 0
+    if session_timer["active"] and session_timer["start_time"]:
+        elapsed = time.time() - session_timer["start_time"]
+        remaining = max(0, round(SESSION_TIMER_DURATION - elapsed))
+    return jsonify({
+        "active": session_timer["active"],
+        "remaining": remaining,
+        "duration": SESSION_TIMER_DURATION,
+    })
+
+
+@app.route("/api/admin/timer", methods=["POST"])
+def admin_timer_control():
+    if not is_admin():
+        return jsonify({"error": "Admin access required"}), 403
+    action = (request.json or {}).get("action", "")
+    if action in ("start", "reset"):
+        session_timer["active"] = True
+        session_timer["start_time"] = time.time()
+        return jsonify({"success": True, "message": "Timer started", "active": True})
+    elif action == "stop":
+        session_timer["active"] = False
+        session_timer["start_time"] = None
+        return jsonify({"success": True, "message": "Timer stopped", "active": False})
+    return jsonify({"error": "Use 'start', 'reset', or 'stop'"}), 400
+
 print(f"[APP] booted in PID {os.getpid()}, prices tick inline via before_request", flush=True)
 
 if __name__ == "__main__":
