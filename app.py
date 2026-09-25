@@ -219,7 +219,7 @@ stocks = [
 
 stock_lock  = threading.Lock()
 user_lock   = threading.Lock()
-market_open = False
+market_open = True
 
 app.recent_alerts = {'stop_loss': [], 'price_target': []}
 
@@ -409,7 +409,7 @@ def simulate_price_tick():
                     stock["history"].pop(0)
 
 
-PRICE_UPDATE_INTERVAL = 30  # seconds
+PRICE_UPDATE_INTERVAL = 20  # seconds
 
 
 def update_prices():
