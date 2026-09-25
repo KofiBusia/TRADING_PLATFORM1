@@ -313,47 +313,58 @@ def simulate_price_tick():
 
 PRICE_UPDATE_INTERVAL = 20  # seconds
 
+price_tick_lock = threading.Lock()
+last_price_update = 0.0
+
 price_engine_status = {
     "pid": os.getpid(),
-    "started_at": None,
     "tick_count": 0,
     "last_tick_at": None,
     "last_error": None,
 }
 
 
-def update_prices():
-    price_engine_status["started_at"] = datetime.now().isoformat()
-    print(f"[PRICE THREAD] started in PID {os.getpid()}", flush=True)
-    last_update = 0
-    while True:
-        try:
-            time.sleep(1)
-            if not market_open:
-                continue
+def maybe_tick_prices():
+    """Ticks prices inline on incoming requests instead of a background
+    thread, so it works the same regardless of the WSGI server's worker
+    model (sync/gthread/gevent/etc) and doesn't depend on a long-lived
+    thread surviving inside a worker process."""
+    global last_price_update
+    if not market_open:
+        return
+    now = time.time()
+    if now - last_price_update < PRICE_UPDATE_INTERVAL:
+        return
+    if not price_tick_lock.acquire(blocking=False):
+        return
+    try:
+        now = time.time()
+        if now - last_price_update < PRICE_UPDATE_INTERVAL:
+            return
+        last_price_update = now
 
-            now = time.time()
-            if now - last_update < PRICE_UPDATE_INTERVAL:
-                continue
-            last_update = now
+        simulate_price_tick()
 
-            simulate_price_tick()
+        sl = apply_stop_losses()
+        pt = check_price_targets()
+        app.recent_alerts['stop_loss'].extend(sl)
+        app.recent_alerts['price_target'].extend(pt)
+        app.recent_alerts['stop_loss']    = app.recent_alerts['stop_loss'][-50:]
+        app.recent_alerts['price_target'] = app.recent_alerts['price_target'][-50:]
 
-            sl = apply_stop_losses()
-            pt = check_price_targets()
-            app.recent_alerts['stop_loss'].extend(sl)
-            app.recent_alerts['price_target'].extend(pt)
-            app.recent_alerts['stop_loss']    = app.recent_alerts['stop_loss'][-50:]
-            app.recent_alerts['price_target'] = app.recent_alerts['price_target'][-50:]
+        price_engine_status["tick_count"] += 1
+        price_engine_status["last_tick_at"] = datetime.now().isoformat()
+        price_engine_status["last_error"] = None
+    except Exception as e:
+        price_engine_status["last_error"] = f"{e!r}"
+        print(f"[PRICE TICK] failed: {e!r}", flush=True)
+    finally:
+        price_tick_lock.release()
 
-            price_engine_status["tick_count"] += 1
-            price_engine_status["last_tick_at"] = datetime.now().isoformat()
-            price_engine_status["last_error"] = None
-        except Exception as e:
-            import traceback
-            price_engine_status["last_error"] = f"{e!r}"
-            print("[PRICE THREAD] tick failed:", flush=True)
-            traceback.print_exc()
+
+@app.before_request
+def _tick_prices_before_request():
+    maybe_tick_prices()
 
 # ─────────────────────────────────────────────
 # Auth helpers
@@ -539,7 +550,10 @@ def get_stocks():
 def get_price_engine_status():
     status = dict(price_engine_status)
     status["market_open"] = market_open
-    status["thread_alive"] = price_thread.is_alive()
+    status["pid"] = os.getpid()
+    status["seconds_since_last_tick"] = (
+        round(time.time() - last_price_update, 1) if last_price_update else None
+    )
     return jsonify(status)
 
 
@@ -1052,12 +1066,7 @@ def market_control():
         return jsonify({"success": True, "message": "Market closed", "market_open": False})
     return jsonify({"error": "Use 'open' or 'close'"}), 400
 
-# ─────────────────────────────────────────────
-# Start background thread + entry point
-# ─────────────────────────────────────────────
-print(f"[PRICE THREAD] launching in PID {os.getpid()}", flush=True)
-price_thread = threading.Thread(target=update_prices, daemon=True)
-price_thread.start()
+print(f"[APP] booted in PID {os.getpid()}, prices tick inline via before_request", flush=True)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
