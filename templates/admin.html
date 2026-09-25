@@ -330,6 +330,34 @@
       .tb-dot.open {
         background: var(--green);
       }
+      .tb-timer-chip {
+        display: none;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 13px;
+        border-radius: 8px;
+        background: rgba(34, 197, 94, 0.1);
+        border: 1px solid rgba(34, 197, 94, 0.3);
+        color: var(--green);
+        font-size: 12px;
+        font-weight: 800;
+        font-variant-numeric: tabular-nums;
+      }
+      .tb-timer-chip.urgent {
+        background: rgba(230, 51, 41, 0.12);
+        border-color: rgba(230, 51, 41, 0.4);
+        color: var(--red);
+        animation: timer-urgent 0.6s infinite;
+      }
+      @keyframes timer-urgent {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.35;
+        }
+      }
       .tb-toggle {
         padding: 4px 10px;
         border-radius: 5px;
@@ -1143,6 +1171,10 @@
           Admin <span>Overview</span>
         </div>
         <div class="topbar-right">
+          <div class="tb-timer-chip" id="tb-timer-chip">
+            <span>⏱</span>
+            <span id="tb-timer-value">10:00</span>
+          </div>
           <div class="tb-mkt-chip">
             <div class="tb-dot" id="tb-dot"></div>
             <span style="color: var(--gray)">Market:</span>
@@ -2150,19 +2182,31 @@
 
       async function refreshTimerStatus() {
         const el = document.getElementById("timer-status");
-        if (!el) return;
+        const chip = document.getElementById("tb-timer-chip");
+        const chipVal = document.getElementById("tb-timer-value");
         try {
           const r = await fetch("/api/timer");
           const d = await r.json();
           if (!d.active) {
-            el.textContent = "Not running";
-            el.style.color = "var(--gray)";
+            if (el) {
+              el.textContent = "Not running";
+              el.style.color = "var(--gray)";
+            }
+            if (chip) chip.style.display = "none";
             return;
           }
           const m = Math.floor(d.remaining / 60);
           const s = d.remaining % 60;
-          el.textContent = `${m}:${String(s).padStart(2, "0")}`;
-          el.style.color = d.remaining <= 30 ? "var(--red)" : "var(--green)";
+          const label = `${m}:${String(s).padStart(2, "0")}`;
+          if (el) {
+            el.textContent = label;
+            el.style.color = d.remaining <= 30 ? "var(--red)" : "var(--green)";
+          }
+          if (chip && chipVal) {
+            chip.style.display = "flex";
+            chipVal.textContent = label;
+            chip.classList.toggle("urgent", d.remaining <= 30 && d.remaining > 0);
+          }
         } catch (e) {}
       }
       setInterval(refreshTimerStatus, 3000);
