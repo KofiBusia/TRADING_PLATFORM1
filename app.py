@@ -6,11 +6,9 @@ import uuid
 import threading
 import time
 import json
-import urllib.request
 import os
 import tempfile
 from datetime import timedelta
-from html.parser import HTMLParser
 
 try:
     import psycopg2
@@ -173,7 +171,7 @@ admin_password = os.environ.get('ADMIN_PASSWORD', 'admin123')
 # GSE stock universe — full official listing (39 companies:
 # 34 Main Market + 5 GAX). Symbols/names/sectors sourced from the
 # exchange's public listings; prices seeded from live GSE data and
-# then kept current by update_prices_with_real_data().
+# then kept current by the in-built simulate_price_tick() random walk.
 # ─────────────────────────────────────────────
 stocks = [
     {"symbol": "AADS",     "name": "AngloGold Ashanti Depositary Shares", "price": 0.42,   "sector": "Mining",              "market": "Main", "history": []},
@@ -222,34 +220,6 @@ user_lock   = threading.Lock()
 market_open = True
 
 app.recent_alerts = {'stop_loss': [], 'price_target': []}
-
-# ─────────────────────────────────────────────
-# HTML parser for AFX scraping
-# ─────────────────────────────────────────────
-class TableParser(HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self.in_tbody = self.in_row = self.in_cell = False
-        self.current_row = []
-        self.current_cell = ""
-        self.rows = []
-
-    def handle_starttag(self, tag, attrs):
-        if   tag == 'tbody':                    self.in_tbody = True
-        elif self.in_tbody and tag == 'tr':     self.in_row = True;  self.current_row = []
-        elif self.in_row   and tag == 'td':     self.in_cell = True; self.current_cell = ""
-
-    def handle_endtag(self, tag):
-        if   tag == 'tbody':                    self.in_tbody = False
-        elif self.in_row   and tag == 'tr':
-            self.in_row = False
-            if self.current_row: self.rows.append(self.current_row)
-        elif self.in_cell  and tag == 'td':
-            self.in_cell = False
-            self.current_row.append(self.current_cell.strip())
-
-    def handle_data(self, data):
-        if self.in_cell: self.current_cell += data
 
 # ─────────────────────────────────────────────
 # Portfolio helpers
@@ -327,78 +297,9 @@ def apply_stop_losses():
         save_users()
     return execs
 
-# ─────────────────────────────────────────────
-# GSE real data fetching
-# ─────────────────────────────────────────────
-def fetch_gse_afx():
-    try:
-        req = urllib.request.Request(
-            'https://afx.kwayisi.org/gse/',
-            headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=10) as r:
-            html = r.read().decode('utf-8')
-        parser = TableParser()
-        parser.feed(html)
-        data = []
-        for row in parser.rows:
-            if len(row) >= 4:
-                sym  = row[1] if len(row) > 1 else ""
-                pstr = row[3].replace('?', '').replace(',', '').strip()
-                if sym and pstr:
-                    try:
-                        data.append({'symbol': sym, 'price': float(pstr)})
-                    except ValueError:
-                        pass
-        return data or None
-    except Exception as e:
-        print(f"[AFX] {e}")
-        return None
-
-
-def fetch_gse_api():
-    try:
-        req = urllib.request.Request(
-            'https://dev.kwayisi.org/apis/gse/live',
-            headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=8) as r:
-            data = json.loads(r.read().decode('utf-8'))
-        result = []
-        if isinstance(data, list):
-            for item in data:
-                if 'name' in item and 'price' in item:
-                    try:
-                        result.append({'symbol': item['name'], 'price': float(item['price'])})
-                    except (ValueError, TypeError):
-                        pass
-        return result or None
-    except Exception as e:
-        print(f"[GSE API] {e}")
-        return None
-
-
-def update_prices_with_real_data():
-    # dev.kwayisi.org/apis/gse/live is the primary source; the AFX table
-    # scrape is a fallback if that API is ever unreachable.
-    real = fetch_gse_api() or fetch_gse_afx()
-    if not real:
-        print("[INFO] Live GSE feeds unreachable, falling back to simulation", flush=True)
-        return False
-    with stock_lock:
-        updated = 0
-        for stock in stocks:
-            match = next((r for r in real if r['symbol'] == stock['symbol']), None)
-            if match and match['price'] > 0:
-                stock['price'] = match['price']
-                stock['history'].append({"time": datetime.now().isoformat(), "price": stock['price']})
-                if len(stock['history']) > 100:
-                    stock['history'].pop(0)
-                updated += 1
-    print(f"[INFO] Updated {updated} stocks from live GSE data", flush=True)
-    return updated > 0
-
 
 def simulate_price_tick():
-    """Small random walk, used only when the live GSE feed can't be reached."""
+    """In-built random walk that drives every price tick."""
     with stock_lock:
         ts = datetime.now().isoformat()
         for stock in stocks:
@@ -427,9 +328,7 @@ def update_prices():
                 continue
             last_update = now
 
-            if not update_prices_with_real_data():
-                simulate_price_tick()
-                print("[PRICE THREAD] simulated tick", flush=True)
+            simulate_price_tick()
 
             sl = apply_stop_losses()
             pt = check_price_targets()

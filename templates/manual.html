@@ -1682,7 +1682,7 @@
           </p>
 
           <h3>How Prices Update</h3>
-          <p>The platform operates in two modes:</p>
+          <p>The platform drives every price with a built-in simulation engine:</p>
           <table class="data-table">
             <thead>
               <tr>
@@ -1693,13 +1693,8 @@
             </thead>
             <tbody>
               <tr>
-                <td>Live Data Mode</td>
-                <td>Fetches actual live market prices</td>
-                <td>Every 20 seconds</td>
-              </tr>
-              <tr>
-                <td>Fallback Simulation</td>
-                <td>Applies a small ±2% random walk only if the live feed is unreachable</td>
+                <td>Simulation Engine</td>
+                <td>Applies a small ±2% random walk to every stock</td>
                 <td>Every 20 seconds</td>
               </tr>
             </tbody>
