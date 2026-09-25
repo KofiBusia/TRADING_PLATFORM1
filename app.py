@@ -33,14 +33,21 @@ app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 DATABASE_URL = os.environ.get('DATABASE_URL')
 
 
+# Caps how long any single query can block on a lock or run, so a slow or
+# contended query fails fast instead of hanging the request (and, since
+# save_users() is reached from inside before_request via the price tick,
+# hanging every other page load behind it) indefinitely.
+_PG_OPTIONS = '-c statement_timeout=5000 -c lock_timeout=3000'
+
+
 def _pg_connect():
     if not psycopg2 or not DATABASE_URL:
         return None
     try:
-        return psycopg2.connect(DATABASE_URL, connect_timeout=8)
+        return psycopg2.connect(DATABASE_URL, connect_timeout=8, options=_PG_OPTIONS)
     except psycopg2.OperationalError:
         try:
-            return psycopg2.connect(DATABASE_URL, connect_timeout=8, sslmode='require')
+            return psycopg2.connect(DATABASE_URL, connect_timeout=8, sslmode='require', options=_PG_OPTIONS)
         except psycopg2.OperationalError as e:
             print(f"[ERROR] Could not connect to Postgres: {e}")
             return None
@@ -141,14 +148,30 @@ def save_users():
             return False
         try:
             with conn, conn.cursor() as cur:
-                cur.execute("DELETE FROM gse_tradesim_users")
+                # Upsert per user instead of wiping the whole table on every
+                # save: this is now called automatically every ~20s from the
+                # price tick (apply_stop_losses), so a full DELETE+reinsert
+                # would lock every row on every tick and could collide with
+                # a concurrent save from an actual user trade.
                 for username, u in users.items():
                     cur.execute(
                         """INSERT INTO gse_tradesim_users (username, id, password, registered_at, portfolio)
-                           VALUES (%s, %s, %s, %s, %s)""",
+                           VALUES (%s, %s, %s, %s, %s)
+                           ON CONFLICT (username) DO UPDATE SET
+                               id = EXCLUDED.id,
+                               password = EXCLUDED.password,
+                               registered_at = EXCLUDED.registered_at,
+                               portfolio = EXCLUDED.portfolio""",
                         (username, u["id"], u["password"], u["registered_at"],
                          psycopg2.extras.Json(u["portfolio"])),
                     )
+                if users:
+                    cur.execute(
+                        "DELETE FROM gse_tradesim_users WHERE username != ALL(%s)",
+                        (list(users.keys()),),
+                    )
+                else:
+                    cur.execute("DELETE FROM gse_tradesim_users")
             return True
         except Exception as e:
             print(f"[ERROR] Could not save users to Postgres: {e}")
@@ -435,7 +458,7 @@ def login():
         if not stored_pw.startswith("pbkdf2:") and not stored_pw.startswith("scrypt:"):
             with user_lock:
                 user["password"] = generate_password_hash(password)
-                save_users()
+            save_users()
 
         session.permanent   = True
         session["user_id"]  = user["id"]
@@ -498,7 +521,7 @@ def signup():
 
             with user_lock:
                 users[username] = new_user
-                saved = save_users()
+            saved = save_users()
 
             if not saved:
                 print(f"[WARN] Could not persist user {username} to disk")
@@ -596,7 +619,7 @@ def reset_portfolio():
         return jsonify({"error": "Not authenticated"}), 401
     with user_lock:
         user["portfolio"] = init_portfolio()
-        save_users()
+    save_users()
     return jsonify({"success": True, "portfolio": user["portfolio"]})
 
 # ─────────────────────────────────────────────
@@ -696,7 +719,7 @@ def buy_stock():
             "price_target": price_target,
         })
         portfolio["total_value"] = calculate_portfolio_value(portfolio)
-        save_users()
+    save_users()
 
     return jsonify({"success": True, "portfolio": portfolio, "order_value": round(total_cost, 2)})
 
@@ -755,7 +778,7 @@ def sell_stock():
             "username":  user["username"],
         })
         portfolio["total_value"] = calculate_portfolio_value(portfolio)
-        save_users()
+    save_users()
 
     return jsonify({"success": True, "portfolio": portfolio, "order_value": total_value})
 
@@ -787,7 +810,7 @@ def update_order_settings():
             try:    holding["price_target"] = float(pt)
             except: return jsonify({"error": "Invalid price target"}), 400
 
-        save_users()
+    save_users()
 
     return jsonify({"success": True, "holding": holding})
 
@@ -947,7 +970,7 @@ def reset_competition():
         return jsonify({"error": "Admin access required"}), 403
     with user_lock:
         users.clear()
-        save_users()
+    save_users()
     return jsonify({"success": True, "message": "Competition reset. All users cleared."})
 
 
@@ -962,7 +985,7 @@ def delete_user():
         if username not in users:
             return jsonify({"error": f"User '{username}' not found"}), 404
         del users[username]
-        save_users()
+    save_users()
     return jsonify({"success": True, "message": f"User '{username}' deleted."})
 
 
@@ -977,7 +1000,7 @@ def reset_user_portfolio():
         if username not in users:
             return jsonify({"error": f"User '{username}' not found"}), 404
         users[username]["portfolio"] = init_portfolio()
-        save_users()
+    save_users()
     return jsonify({"success": True, "message": f"Portfolio for '{username}' reset to GHS 1,000,000."})
 
 
