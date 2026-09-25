@@ -381,6 +381,7 @@ def update_prices_with_real_data():
     # scrape is a fallback if that API is ever unreachable.
     real = fetch_gse_api() or fetch_gse_afx()
     if not real:
+        print("[INFO] Live GSE feeds unreachable, falling back to simulation", flush=True)
         return False
     with stock_lock:
         updated = 0
@@ -392,7 +393,7 @@ def update_prices_with_real_data():
                 if len(stock['history']) > 100:
                     stock['history'].pop(0)
                 updated += 1
-    print(f"[INFO] Updated {updated} stocks from live GSE data")
+    print(f"[INFO] Updated {updated} stocks from live GSE data", flush=True)
     return updated > 0
 
 
@@ -413,26 +414,33 @@ PRICE_UPDATE_INTERVAL = 20  # seconds
 
 
 def update_prices():
+    print("[PRICE THREAD] started", flush=True)
     last_update = 0
     while True:
-        time.sleep(1)
-        if not market_open:
-            continue
+        try:
+            time.sleep(1)
+            if not market_open:
+                continue
 
-        now = time.time()
-        if now - last_update < PRICE_UPDATE_INTERVAL:
-            continue
-        last_update = now
+            now = time.time()
+            if now - last_update < PRICE_UPDATE_INTERVAL:
+                continue
+            last_update = now
 
-        if not update_prices_with_real_data():
-            simulate_price_tick()
+            if not update_prices_with_real_data():
+                simulate_price_tick()
+                print("[PRICE THREAD] simulated tick", flush=True)
 
-        sl = apply_stop_losses()
-        pt = check_price_targets()
-        app.recent_alerts['stop_loss'].extend(sl)
-        app.recent_alerts['price_target'].extend(pt)
-        app.recent_alerts['stop_loss']    = app.recent_alerts['stop_loss'][-50:]
-        app.recent_alerts['price_target'] = app.recent_alerts['price_target'][-50:]
+            sl = apply_stop_losses()
+            pt = check_price_targets()
+            app.recent_alerts['stop_loss'].extend(sl)
+            app.recent_alerts['price_target'].extend(pt)
+            app.recent_alerts['stop_loss']    = app.recent_alerts['stop_loss'][-50:]
+            app.recent_alerts['price_target'] = app.recent_alerts['price_target'][-50:]
+        except Exception:
+            import traceback
+            print("[PRICE THREAD] tick failed:", flush=True)
+            traceback.print_exc()
 
 # ─────────────────────────────────────────────
 # Auth helpers
@@ -1126,6 +1134,7 @@ def market_control():
 # ─────────────────────────────────────────────
 # Start background thread + entry point
 # ─────────────────────────────────────────────
+print(f"[PRICE THREAD] launching in PID {os.getpid()}", flush=True)
 price_thread = threading.Thread(target=update_prices, daemon=True)
 price_thread.start()
 
