@@ -313,9 +313,18 @@ def simulate_price_tick():
 
 PRICE_UPDATE_INTERVAL = 20  # seconds
 
+price_engine_status = {
+    "pid": os.getpid(),
+    "started_at": None,
+    "tick_count": 0,
+    "last_tick_at": None,
+    "last_error": None,
+}
+
 
 def update_prices():
-    print("[PRICE THREAD] started", flush=True)
+    price_engine_status["started_at"] = datetime.now().isoformat()
+    print(f"[PRICE THREAD] started in PID {os.getpid()}", flush=True)
     last_update = 0
     while True:
         try:
@@ -336,8 +345,13 @@ def update_prices():
             app.recent_alerts['price_target'].extend(pt)
             app.recent_alerts['stop_loss']    = app.recent_alerts['stop_loss'][-50:]
             app.recent_alerts['price_target'] = app.recent_alerts['price_target'][-50:]
-        except Exception:
+
+            price_engine_status["tick_count"] += 1
+            price_engine_status["last_tick_at"] = datetime.now().isoformat()
+            price_engine_status["last_error"] = None
+        except Exception as e:
             import traceback
+            price_engine_status["last_error"] = f"{e!r}"
             print("[PRICE THREAD] tick failed:", flush=True)
             traceback.print_exc()
 
@@ -519,6 +533,14 @@ def get_stocks():
     for s in data:
         s['market_open'] = market_open
     return jsonify(data)
+
+
+@app.route("/api/price_engine_status")
+def get_price_engine_status():
+    status = dict(price_engine_status)
+    status["market_open"] = market_open
+    status["thread_alive"] = price_thread.is_alive()
+    return jsonify(status)
 
 
 @app.route("/api/portfolio")
