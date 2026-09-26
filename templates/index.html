@@ -161,6 +161,9 @@
       .session-timer .st-icon {
         font-size: 18px;
       }
+      .session-timer .st-label {
+        display: none;
+      }
       .session-timer.urgent {
         background: rgba(230, 51, 41, 0.16);
         border-color: rgba(230, 51, 41, 0.6);
@@ -1186,7 +1189,7 @@
         display: none;
         position: fixed;
         top: 22px;
-        right: 28px;
+        left: 28px;
         z-index: 9999;
         padding: 12px 24px;
         background: #0f172a;
@@ -1201,10 +1204,63 @@
         box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
       }
       body.lb-presentation .sidebar,
-      body.lb-presentation .topbar,
       body.lb-presentation .ticker-bar,
       body.lb-presentation .lb-my-position {
         display: none !important;
+      }
+      body.lb-presentation .topbar {
+        background: #ffffff !important;
+        border-bottom: 1px solid #e2e8f0;
+        justify-content: flex-end;
+      }
+      body.lb-presentation .topbar-title,
+      body.lb-presentation .topbar .alert-btn,
+      body.lb-presentation .topbar-right > div:last-child {
+        display: none !important;
+      }
+      body.lb-presentation .topbar {
+        height: auto;
+        min-height: 110px;
+        padding: 20px 40px;
+      }
+      body.lb-presentation .session-timer {
+        font-size: 44px;
+        padding: 18px 40px;
+        gap: 16px;
+        border-width: 3px;
+        border-radius: 14px;
+        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.08);
+      }
+      body.lb-presentation .session-timer .st-icon {
+        font-size: 36px;
+      }
+      body.lb-presentation .session-timer .st-label {
+        display: inline;
+        font-size: 18px;
+        font-weight: 800;
+        letter-spacing: 1.5px;
+        opacity: 0.75;
+        margin-right: 2px;
+      }
+      body.lb-presentation .session-timer.urgent {
+        border-width: 4px;
+      }
+      body.lb-presentation #view-leaderboard {
+        /* Scoped to the leaderboard view only - NOT the whole body - so
+           modals and other popups elsewhere on the page, which keep their
+           own dark background, don't inherit these and go dark-text-on-
+           dark-bg. Cells with no explicit color inherit these, so growth
+           (which sets its own green/red inline) and rank medal colors are
+           untouched, while plain text becomes readable on white. `color`
+           is redeclared here too: body's own color:var(--white) already
+           resolved to white using the ORIGINAL --white, and plain
+           inheritance only passes that resolved value down rather than
+           re-evaluating var() per descendant - redeclaring color here
+           re-resolves it against the new value for everything inside
+           this view. */
+        --white: #0f172a;
+        --gray: #64748b;
+        color: var(--white);
       }
       body.lb-presentation,
       body.lb-presentation .main,
@@ -1284,7 +1340,6 @@
       }
       body.lb-presentation .lb-table td {
         font-size: 24px !important;
-        color: #0f172a !important;
         padding: 22px 20px;
         border-bottom: 1px solid #eef2f6;
       }
@@ -1302,7 +1357,6 @@
       }
       body.lb-presentation .lb-rank-other {
         background: #f1f5f9 !important;
-        color: #475569 !important;
       }
       body.lb-presentation .lb-progress-wrap {
         width: 140px;
@@ -1677,6 +1731,7 @@
         </div>
         <div class="topbar-right">
           <div class="session-timer" id="session-timer">
+            <span class="st-label">TIME LEFT</span>
             <span class="st-icon">⏱</span>
             <span id="session-timer-value">10:00</span>
           </div>
