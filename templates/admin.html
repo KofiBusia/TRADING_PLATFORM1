@@ -2441,36 +2441,52 @@
         }
       }
 
+      let adminTimerActive = false;
+      let adminTimerRemaining = null;
+
       async function refreshTimerStatus() {
-        const el = document.getElementById("timer-status");
-        const chip = document.getElementById("tb-timer-chip");
-        const chipVal = document.getElementById("tb-timer-value");
         try {
           const r = await fetch("/api/timer");
           const d = await r.json();
-          if (!d.active) {
-            if (el) {
-              el.textContent = "Not running";
-              el.style.color = "var(--gray)";
-            }
-            if (chip) chip.style.display = "none";
-            return;
-          }
-          const m = Math.floor(d.remaining / 60);
-          const s = d.remaining % 60;
-          const label = `${m}:${String(s).padStart(2, "0")}`;
-          if (el) {
-            el.textContent = label;
-            el.style.color = d.remaining <= 30 ? "var(--red)" : "var(--green)";
-          }
-          if (chip && chipVal) {
-            chip.style.display = "flex";
-            chipVal.textContent = label;
-            chip.classList.toggle("urgent", d.remaining <= 30 && d.remaining > 0);
-          }
+          adminTimerActive = d.active;
+          adminTimerRemaining = d.remaining;
+          renderTimerStatus();
         } catch (e) {}
       }
-      setInterval(refreshTimerStatus, 3000);
+
+      function tickTimerStatus() {
+        if (!adminTimerActive || adminTimerRemaining === null) return;
+        adminTimerRemaining = Math.max(0, adminTimerRemaining - 1);
+        renderTimerStatus();
+      }
+
+      function renderTimerStatus() {
+        const el = document.getElementById("timer-status");
+        const chip = document.getElementById("tb-timer-chip");
+        const chipVal = document.getElementById("tb-timer-value");
+        if (!adminTimerActive) {
+          if (el) {
+            el.textContent = "Not running";
+            el.style.color = "var(--gray)";
+          }
+          if (chip) chip.style.display = "none";
+          return;
+        }
+        const m = Math.floor(adminTimerRemaining / 60);
+        const s = adminTimerRemaining % 60;
+        const label = `${m}:${String(s).padStart(2, "0")}`;
+        if (el) {
+          el.textContent = label;
+          el.style.color = adminTimerRemaining <= 30 ? "var(--red)" : "var(--green)";
+        }
+        if (chip && chipVal) {
+          chip.style.display = "flex";
+          chipVal.textContent = label;
+          chip.classList.toggle("urgent", adminTimerRemaining <= 30 && adminTimerRemaining > 0);
+        }
+      }
+      setInterval(refreshTimerStatus, 5000);
+      setInterval(tickTimerStatus, 1000);
       refreshTimerStatus();
 
       // ══ USER DETAIL ══
