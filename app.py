@@ -13,6 +13,7 @@ from datetime import timedelta
 try:
     import psycopg2
     import psycopg2.extras
+    import psycopg2.pool
 except ImportError:
     psycopg2 = None
 
@@ -39,18 +40,51 @@ DATABASE_URL = os.environ.get('DATABASE_URL')
 # hanging every other page load behind it) indefinitely.
 _PG_OPTIONS = '-c statement_timeout=5000 -c lock_timeout=3000'
 
+# A pool instead of opening a fresh TCP+TLS connection per request: under
+# real concurrent load, that handshake cost was compounding into a growing
+# request queue on a limited-thread worker, which looked like the whole
+# site being frozen even though no single request was truly stuck forever.
+_pg_pool = None
 
-def _pg_connect():
+
+def _init_pg_pool():
     if not psycopg2 or not DATABASE_URL:
         return None
-    try:
-        return psycopg2.connect(DATABASE_URL, connect_timeout=8, options=_PG_OPTIONS)
-    except psycopg2.OperationalError:
+    for kwargs in (
+        {"connect_timeout": 5, "options": _PG_OPTIONS},
+        {"connect_timeout": 5, "options": _PG_OPTIONS, "sslmode": "require"},
+    ):
         try:
-            return psycopg2.connect(DATABASE_URL, connect_timeout=8, sslmode='require', options=_PG_OPTIONS)
+            return psycopg2.pool.ThreadedConnectionPool(1, 5, DATABASE_URL, **kwargs)
         except psycopg2.OperationalError as e:
-            print(f"[ERROR] Could not connect to Postgres: {e}")
-            return None
+            last_err = e
+    print(f"[ERROR] Could not create Postgres connection pool: {last_err}")
+    return None
+
+
+def _pg_connect():
+    if not _pg_pool:
+        return None
+    try:
+        return _pg_pool.getconn()
+    except Exception as e:
+        print(f"[ERROR] Could not get Postgres connection from pool: {e}")
+        return None
+
+
+def _pg_release(conn):
+    if conn is None:
+        return
+    if _pg_pool:
+        try:
+            _pg_pool.putconn(conn)
+            return
+        except Exception:
+            pass
+    try:
+        conn.close()
+    except Exception:
+        pass
 
 
 def _pg_init():
@@ -73,9 +107,10 @@ def _pg_init():
         print(f"[ERROR] Could not initialize Postgres schema: {e}")
         return False
     finally:
-        conn.close()
+        _pg_release(conn)
 
 
+_pg_pool = _init_pg_pool()
 USE_POSTGRES = _pg_init()
 
 
@@ -128,7 +163,7 @@ def load_users():
                 print(f"[ERROR] Could not load users from Postgres: {e}")
                 return {}
             finally:
-                conn.close()
+                _pg_release(conn)
         return {}
 
     if os.path.exists(USERS_FILE):
@@ -177,7 +212,7 @@ def save_users():
             print(f"[ERROR] Could not save users to Postgres: {e}")
             return False
         finally:
-            conn.close()
+            _pg_release(conn)
 
     try:
         with open(USERS_FILE, 'w') as f:
