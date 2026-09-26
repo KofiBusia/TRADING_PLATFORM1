@@ -72,19 +72,29 @@ def _pg_connect():
         return None
 
 
-def _pg_release(conn):
+def _pg_release(conn, discard=False):
+    """discard=True closes the connection instead of returning it to the
+    pool - use this after a query on it failed, so a broken/stale
+    connection (e.g. one the server dropped while idle) doesn't get
+    handed to the next caller and fail again."""
     if conn is None:
         return
-    if _pg_pool:
+    if _pg_pool and not discard:
         try:
             _pg_pool.putconn(conn)
             return
         except Exception:
             pass
     try:
-        conn.close()
+        if _pg_pool:
+            _pg_pool.putconn(conn, close=True)
+        else:
+            conn.close()
     except Exception:
-        pass
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def _pg_init():
@@ -141,8 +151,15 @@ else:
 
 def load_users():
     if USE_POSTGRES:
-        conn = _pg_connect()
-        if conn:
+        # Retried once: a connection freshly out of the pool can be stale
+        # if Postgres or a proxy dropped it while idle, and that failure
+        # mode is exactly what must not be mistaken for "there are no
+        # users" - this used to feed an empty dict into save_users()'s old
+        # delete-what's-missing logic and wipe every real row.
+        for attempt in range(2):
+            conn = _pg_connect()
+            if not conn:
+                continue
             try:
                 with conn.cursor() as cur:
                     cur.execute("SELECT username, id, password, registered_at, portfolio FROM gse_tradesim_users")
@@ -158,12 +175,15 @@ def load_users():
                     for username, uid, password, registered_at, portfolio in rows
                 }
                 print(f"[INFO] Loaded {len(data)} users from Postgres")
+                _pg_release(conn)
                 return data
             except Exception as e:
-                print(f"[ERROR] Could not load users from Postgres: {e}")
-                return {}
-            finally:
-                _pg_release(conn)
+                print(f"[ERROR] Could not load users from Postgres (attempt {attempt + 1}): {e}")
+                _pg_release(conn, discard=True)
+        print("[ERROR] Giving up loading users from Postgres after retry - starting with an empty in-memory set. "
+              "This does NOT delete anything in Postgres (save_users() only ever upserts), but any user who "
+              "signs up or trades before a successful reload will not see users who existed before this restart "
+              "until the next deploy re-reads them.")
         return {}
 
     if os.path.exists(USERS_FILE):
@@ -177,17 +197,20 @@ def load_users():
     return {}
 
 def save_users():
+    # Upserts only - never infers deletions from what's absent in the
+    # in-memory `users` dict. That used to also run a DELETE for any
+    # Postgres row not currently in `users`, which is catastrophic if
+    # load_users() ever returned {} at startup (e.g. a stale pooled
+    # connection failing its first query): the very next save would wipe
+    # every real row. Deletions are explicit now - see _pg_delete_user()
+    # and _pg_delete_all_users(), called only from the admin endpoints
+    # whose entire purpose is to delete.
     if USE_POSTGRES:
         conn = _pg_connect()
         if not conn:
             return False
         try:
             with conn, conn.cursor() as cur:
-                # Upsert per user instead of wiping the whole table on every
-                # save: this is now called automatically every ~20s from the
-                # price tick (apply_stop_losses), so a full DELETE+reinsert
-                # would lock every row on every tick and could collide with
-                # a concurrent save from an actual user trade.
                 for username, u in users.items():
                     cur.execute(
                         """INSERT INTO gse_tradesim_users (username, id, password, registered_at, portfolio)
@@ -200,13 +223,6 @@ def save_users():
                         (username, u["id"], u["password"], u["registered_at"],
                          psycopg2.extras.Json(u["portfolio"])),
                     )
-                if users:
-                    cur.execute(
-                        "DELETE FROM gse_tradesim_users WHERE username != ALL(%s)",
-                        (list(users.keys()),),
-                    )
-                else:
-                    cur.execute("DELETE FROM gse_tradesim_users")
             return True
         except Exception as e:
             print(f"[ERROR] Could not save users to Postgres: {e}")
@@ -221,6 +237,41 @@ def save_users():
     except Exception as e:
         print(f"[ERROR] Could not save users: {e}")
         return False
+
+
+def _pg_delete_user(username):
+    """Explicit, intentional single-row delete - only called from the
+    admin delete-user endpoint, never inferred from save_users()."""
+    if not USE_POSTGRES:
+        return
+    conn = _pg_connect()
+    if not conn:
+        return
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM gse_tradesim_users WHERE username = %s", (username,))
+    except Exception as e:
+        print(f"[ERROR] Could not delete user from Postgres: {e}")
+    finally:
+        _pg_release(conn)
+
+
+def _pg_delete_all_users():
+    """Explicit, intentional full-table wipe - only called from the admin
+    reset-competition endpoint, never inferred from save_users()."""
+    if not USE_POSTGRES:
+        return
+    conn = _pg_connect()
+    if not conn:
+        return
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM gse_tradesim_users")
+    except Exception as e:
+        print(f"[ERROR] Could not clear users in Postgres: {e}")
+    finally:
+        _pg_release(conn)
+
 
 users = load_users()
 admin_password = os.environ.get('ADMIN_PASSWORD', 'admin123')
@@ -1005,6 +1056,7 @@ def reset_competition():
         return jsonify({"error": "Admin access required"}), 403
     with user_lock:
         users.clear()
+    _pg_delete_all_users()
     save_users()
     return jsonify({"success": True, "message": "Competition reset. All users cleared."})
 
@@ -1020,6 +1072,7 @@ def delete_user():
         if username not in users:
             return jsonify({"error": f"User '{username}' not found"}), 404
         del users[username]
+    _pg_delete_user(username)
     save_users()
     return jsonify({"success": True, "message": f"User '{username}' deleted."})
 
