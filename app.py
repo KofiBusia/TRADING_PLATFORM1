@@ -1093,9 +1093,9 @@ def market_control():
 # ─────────────────────────────────────────────
 # Session timer — admin-controlled countdown shown on every user's page
 # ─────────────────────────────────────────────
-SESSION_TIMER_DURATION = 600  # 10 minutes
+DEFAULT_SESSION_TIMER_DURATION = 600  # 10 minutes
 
-session_timer = {"active": False, "start_time": None}
+session_timer = {"active": False, "start_time": None, "duration": DEFAULT_SESSION_TIMER_DURATION}
 
 
 @app.route("/api/timer")
@@ -1103,11 +1103,11 @@ def get_session_timer():
     remaining = 0
     if session_timer["active"] and session_timer["start_time"]:
         elapsed = time.time() - session_timer["start_time"]
-        remaining = max(0, round(SESSION_TIMER_DURATION - elapsed))
+        remaining = max(0, round(session_timer["duration"] - elapsed))
     return jsonify({
         "active": session_timer["active"],
         "remaining": remaining,
-        "duration": SESSION_TIMER_DURATION,
+        "duration": session_timer["duration"],
     })
 
 
@@ -1115,11 +1115,24 @@ def get_session_timer():
 def admin_timer_control():
     if not is_admin():
         return jsonify({"error": "Admin access required"}), 403
-    action = (request.json or {}).get("action", "")
+    data = request.json or {}
+    action = data.get("action", "")
     if action in ("start", "reset"):
+        try:
+            minutes = float(data.get("minutes", session_timer["duration"] / 60))
+        except (TypeError, ValueError):
+            return jsonify({"error": "Invalid minutes"}), 400
+        if minutes <= 0 or minutes > 1440:
+            return jsonify({"error": "Minutes must be between 0 and 1440"}), 400
+        session_timer["duration"] = minutes * 60
         session_timer["active"] = True
         session_timer["start_time"] = time.time()
-        return jsonify({"success": True, "message": "Timer started", "active": True})
+        return jsonify({
+            "success": True,
+            "message": f"Timer started ({minutes:g} min)",
+            "active": True,
+            "duration": session_timer["duration"],
+        })
     elif action == "stop":
         session_timer["active"] = False
         session_timer["start_time"] = None

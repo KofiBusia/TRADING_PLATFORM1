@@ -147,19 +147,23 @@
       .session-timer {
         display: none;
         align-items: center;
-        gap: 6px;
-        padding: 6px 12px;
-        border-radius: 8px;
-        background: rgba(34, 197, 94, 0.1);
-        border: 1px solid rgba(34, 197, 94, 0.3);
+        gap: 8px;
+        padding: 9px 20px;
+        border-radius: 10px;
+        background: rgba(34, 197, 94, 0.12);
+        border: 2px solid rgba(34, 197, 94, 0.4);
         color: var(--green);
-        font-size: 13px;
+        font-size: 20px;
         font-weight: 800;
         font-variant-numeric: tabular-nums;
+        letter-spacing: 0.5px;
+      }
+      .session-timer .st-icon {
+        font-size: 18px;
       }
       .session-timer.urgent {
-        background: rgba(230, 51, 41, 0.12);
-        border-color: rgba(230, 51, 41, 0.4);
+        background: rgba(230, 51, 41, 0.16);
+        border-color: rgba(230, 51, 41, 0.6);
         color: var(--red);
         animation: timer-urgent 0.6s infinite;
       }
@@ -1544,7 +1548,7 @@
         </div>
         <div class="topbar-right">
           <div class="session-timer" id="session-timer">
-            <span>⏱</span>
+            <span class="st-icon">⏱</span>
             <span id="session-timer-value">10:00</span>
           </div>
           <div class="alert-btn" onclick="showView('alerts')" title="Alerts">
