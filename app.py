@@ -521,6 +521,22 @@ def _tick_prices_before_request():
     maybe_tick_prices()
 
 
+@app.after_request
+def _no_cache_html(response):
+    # HTML pages carry inline <script> - browsers/proxies caching a stale
+    # copy would keep serving old client-side JS (e.g. a since-removed
+    # feature) even after the server's been updated and redeployed. Only
+    # an *already-open* tab is immune to this (it just keeps running what
+    # it loaded, cache headers or not - that needs an actual reload), but
+    # this stops a fresh navigation or revisit from ever picking up a
+    # cached stale page in the first place.
+    if response.content_type and response.content_type.startswith("text/html"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
+
 def generate_order_book(stock, levels=8):
     """Bid/ask depth for the Market Watch view, built from the same 'bias'
     field that simulate_price_tick() reads to move the price - so this is
