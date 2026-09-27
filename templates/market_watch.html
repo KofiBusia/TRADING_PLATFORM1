@@ -1,0 +1,645 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Market Watch — YIN TradeSim</title>
+    <meta name="description" content="Live order-book depth, demand/supply pressure and price action across all 39 Ghana Stock Exchange stocks." />
+    <meta name="theme-color" content="#1a2366" />
+    <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" />
+
+    <link
+      href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Barlow+Condensed:wght@600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" defer></script>
+    <style>
+      :root {
+        --navy: #1a2366;
+        --navy-dark: #0d1433;
+        --navy-mid: #111848;
+        --sky: #2e9fd4;
+        --sky-light: #4db8ed;
+        --red: #e63329;
+        --green: #22c55e;
+        --amber: #f59e0b;
+        --white: #ffffff;
+        --gray: #8898aa;
+        --gray-light: #b0bec5;
+        --card: rgba(255, 255, 255, 0.04);
+        --card-hover: rgba(255, 255, 255, 0.07);
+        --border: rgba(46, 159, 212, 0.15);
+        --border-strong: rgba(46, 159, 212, 0.3);
+      }
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { min-height: 100%; background: var(--navy-dark); }
+      body {
+        font-family: "Barlow", sans-serif;
+        color: var(--white);
+        display: flex;
+        flex-direction: column;
+        min-height: 100vh;
+      }
+      .mono { font-family: "JetBrains Mono", monospace; }
+
+      /* ===== HEADER ===== */
+      .mw-header {
+        height: 64px;
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        padding: 0 22px;
+        background: var(--navy-mid);
+        border-bottom: 1px solid var(--border);
+        position: sticky;
+        top: 0;
+        z-index: 50;
+      }
+      .mw-back {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--gray-light);
+        text-decoration: none;
+        padding: 7px 12px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        transition: all 0.15s;
+      }
+      .mw-back:hover { background: var(--card); color: var(--white); border-color: var(--border-strong); }
+      .mw-title {
+        font-family: "Barlow Condensed", sans-serif;
+        font-size: 22px;
+        font-weight: 800;
+        letter-spacing: 0.3px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .mw-title span { color: var(--sky); }
+      .mw-title .badge-live {
+        font-size: 9px;
+        font-weight: 800;
+        letter-spacing: 1.5px;
+        text-transform: uppercase;
+        background: rgba(230, 51, 41, 0.15);
+        color: var(--red);
+        border: 1px solid rgba(230, 51, 41, 0.3);
+        border-radius: 100px;
+        padding: 3px 9px;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .badge-live .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; animation: blink 1.4s infinite; }
+      @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+
+      .mw-header-right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+      .market-status-pill {
+        display: flex; align-items: center; gap: 6px;
+        background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(34, 197, 94, 0.2);
+        border-radius: 100px; padding: 4px 11px; font-size: 10px; font-weight: 700;
+        letter-spacing: 1px; text-transform: uppercase; color: var(--green);
+      }
+      .market-status-pill.closed { background: rgba(230, 51, 41, 0.1); border-color: rgba(230, 51, 41, 0.2); color: var(--red); }
+      .status-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; animation: blink 1.5s infinite; }
+      .mw-updated { font-size: 11px; color: var(--gray); white-space: nowrap; }
+      .mw-user { display: flex; align-items: center; gap: 8px; padding-left: 14px; border-left: 1px solid var(--border); }
+      .mw-avatar {
+        width: 30px; height: 30px; border-radius: 8px; background: linear-gradient(135deg, var(--sky), var(--navy));
+        display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 13px; flex-shrink: 0;
+      }
+      .mw-user-name { font-size: 12px; font-weight: 700; line-height: 1.2; }
+      .mw-user-role { font-size: 10px; color: var(--sky); text-transform: uppercase; letter-spacing: 0.5px; }
+
+      /* ===== TICKER ===== */
+      .mw-ticker { height: 32px; background: var(--navy); border-bottom: 1px solid var(--border); display: flex; align-items: center; overflow: hidden; flex-shrink: 0; }
+      .mw-ticker-scroll { display: flex; gap: 0; overflow: hidden; animation: tickerScroll 70s linear infinite; white-space: nowrap; }
+      .mw-ticker:hover .mw-ticker-scroll { animation-play-state: paused; }
+      @keyframes tickerScroll { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
+      .tk-item { display: inline-flex; align-items: center; gap: 6px; padding: 0 18px; font-size: 11px; font-weight: 600; border-right: 1px solid var(--border); cursor: pointer; }
+      .tk-item .sym { color: var(--sky); }
+      .tk-item .chg.up { color: var(--green); }
+      .tk-item .chg.dn { color: var(--red); }
+
+      /* ===== PULSE STRIP ===== */
+      .mw-pulse {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 1px;
+        background: var(--border);
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
+      }
+      .pulse-tile { background: var(--navy-mid); padding: 12px 20px; }
+      .pulse-label { font-size: 9px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--gray); margin-bottom: 5px; }
+      .pulse-value { font-family: "JetBrains Mono", monospace; font-size: 20px; font-weight: 700; }
+      .pulse-value.up { color: var(--green); }
+      .pulse-value.dn { color: var(--red); }
+      .pulse-sub { font-size: 10px; color: var(--gray); margin-top: 2px; }
+
+      /* ===== BODY ===== */
+      .mw-body { flex: 1; display: grid; grid-template-columns: 420px 1fr; gap: 1px; background: var(--border); }
+      @media (max-width: 980px) { .mw-body { grid-template-columns: 1fr; } }
+
+      .mw-panel { background: var(--navy-dark); display: flex; flex-direction: column; min-width: 0; }
+      .panel-head { padding: 16px 18px 12px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      .panel-head h2 { font-family: "Barlow Condensed", sans-serif; font-size: 16px; font-weight: 800; letter-spacing: 0.5px; text-transform: uppercase; color: var(--gray-light); }
+
+      /* ---- list panel ---- */
+      .mw-search { flex: 1; min-width: 120px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; color: var(--white); font-size: 12px; }
+      .mw-search:focus { outline: none; border-color: var(--sky); }
+      .mw-select { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; color: var(--gray-light); font-size: 11px; font-weight: 600; }
+      .mw-list-scroll { flex: 1; overflow-y: auto; padding: 0 8px 12px; }
+      .mw-row {
+        display: grid;
+        grid-template-columns: 66px 1fr 70px 60px;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 10px;
+        border-radius: 9px;
+        cursor: pointer;
+        border: 1px solid transparent;
+        margin-bottom: 2px;
+        transition: background 0.12s, border-color 0.12s;
+      }
+      .mw-row:hover { background: var(--card); }
+      .mw-row.active { background: rgba(46, 159, 212, 0.1); border-color: var(--border-strong); }
+      .mw-row .sym { font-weight: 800; font-size: 12.5px; }
+      .mw-row .nm { font-size: 10.5px; color: var(--gray); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .mw-row .px { font-family: "JetBrains Mono", monospace; font-size: 12px; text-align: right; }
+      .mw-row .cg { font-size: 11px; font-weight: 700; text-align: right; }
+      .mw-row .cg.up { color: var(--green); }
+      .mw-row .cg.dn { color: var(--red); }
+      .mw-ds-bar { grid-column: 1 / -1; height: 4px; border-radius: 3px; overflow: hidden; display: flex; background: rgba(255,255,255,0.06); margin-top: 6px; }
+      .mw-ds-bar .d { background: var(--green); height: 100%; }
+      .mw-ds-bar .s { background: var(--red); height: 100%; }
+
+      /* ---- detail panel ---- */
+      .mw-detail-scroll { flex: 1; overflow-y: auto; padding: 0 20px 24px; }
+      .dt-header { display: flex; align-items: flex-start; gap: 16px; flex-wrap: wrap; padding: 4px 0 18px; border-bottom: 1px solid var(--border); margin-bottom: 18px; }
+      .dt-id .dt-sym { font-family: "Barlow Condensed", sans-serif; font-size: 30px; font-weight: 800; line-height: 1; }
+      .dt-id .dt-name { font-size: 12.5px; color: var(--gray-light); margin-top: 4px; }
+      .dt-badges { display: flex; gap: 6px; margin-top: 8px; }
+      .pill-tag { font-size: 9.5px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; padding: 3px 8px; border-radius: 100px; background: var(--card); border: 1px solid var(--border); color: var(--gray-light); }
+      .dt-price-block { margin-left: auto; text-align: right; }
+      .dt-price { font-family: "JetBrains Mono", monospace; font-size: 30px; font-weight: 700; }
+      .dt-chg { font-size: 14px; font-weight: 800; margin-top: 4px; }
+      .dt-chg.up { color: var(--green); }
+      .dt-chg.dn { color: var(--red); }
+
+      .ds-split { margin-bottom: 22px; }
+      .ds-labels { display: flex; justify-content: space-between; font-size: 11px; font-weight: 700; margin-bottom: 7px; }
+      .ds-labels .l { color: var(--green); }
+      .ds-labels .r { color: var(--red); }
+      .ds-track { height: 22px; border-radius: 6px; overflow: hidden; display: flex; border: 1px solid var(--border); }
+      .ds-demand { background: linear-gradient(90deg, rgba(34,197,94,0.55), rgba(34,197,94,0.85)); display: flex; align-items: center; justify-content: flex-end; padding-right: 8px; font-size: 10.5px; font-weight: 800; color: #06230f; transition: width 0.4s ease; }
+      .ds-supply { background: linear-gradient(90deg, rgba(230,51,41,0.85), rgba(230,51,41,0.55)); display: flex; align-items: center; padding-left: 8px; font-size: 10.5px; font-weight: 800; color: #2b0503; transition: width 0.4s ease; }
+      .ds-meta { display: flex; justify-content: space-between; margin-top: 7px; font-size: 10.5px; color: var(--gray); }
+      .ds-meta b { color: var(--sky); font-family: "JetBrains Mono", monospace; }
+
+      .mw-card { background: var(--navy-mid); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 18px; }
+      .mw-card-title { font-size: 10px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; color: var(--gray); margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; }
+      .mw-card-title .spread-tag { color: var(--sky); font-family: "JetBrains Mono", monospace; font-weight: 700; letter-spacing: 0; }
+
+      .depth-chart-wrap { height: 220px; position: relative; }
+
+      /* order book ladder */
+      .ladder { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px; }
+      .ladder-col-head { display: grid; grid-template-columns: 1fr 1fr; font-size: 9.5px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: var(--gray); padding-bottom: 6px; }
+      .ladder-side { display: flex; flex-direction: column; gap: 2px; }
+      .ladder-row { position: relative; display: grid; grid-template-columns: 1fr 1fr; font-size: 11.5px; font-family: "JetBrains Mono", monospace; padding: 4px 6px; border-radius: 4px; overflow: hidden; }
+      .ladder-row .bar { position: absolute; top: 0; bottom: 0; z-index: 0; opacity: 0.18; }
+      .ladder-row.bid .bar { right: 0; background: var(--green); }
+      .ladder-row.ask .bar { left: 0; background: var(--red); }
+      .ladder-row span { position: relative; z-index: 1; }
+      .ladder-row.bid .p { color: var(--green); text-align: right; }
+      .ladder-row.bid .sz { text-align: left; color: var(--gray-light); padding-left: 8px; }
+      .ladder-row.ask .p { color: var(--red); }
+      .ladder-row.ask .sz { text-align: right; color: var(--gray-light); }
+
+      .price-chart-wrap { height: 200px; position: relative; }
+      .pc-meta { display: flex; gap: 18px; font-size: 10.5px; color: var(--gray); margin-top: 10px; flex-wrap: wrap; }
+      .pc-meta b { color: var(--white); font-family: "JetBrains Mono", monospace; font-weight: 600; }
+
+      .mw-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 20px; color: var(--gray); gap: 8px; text-align: center; }
+      .mw-empty .ic { font-size: 34px; }
+
+      ::-webkit-scrollbar { width: 8px; height: 8px; }
+      ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+
+      @media (max-width: 640px) {
+        .mw-header { padding: 0 14px; gap: 12px; }
+        .mw-updated { display: none; }
+        .mw-pulse { grid-template-columns: repeat(2, 1fr); }
+        .ladder { grid-template-columns: 1fr; }
+        .dt-price-block { margin-left: 0; text-align: left; }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="mw-header">
+      <a href="/" class="mw-back">← Dashboard</a>
+      <div class="mw-title">
+        Market <span>Watch</span>
+        <span class="badge-live"><span class="dot"></span>Live</span>
+      </div>
+      <div class="mw-header-right">
+        <div class="mw-updated" id="mw-updated">Loading…</div>
+        <div class="market-status-pill closed" id="mw-market-pill">
+          <div class="status-dot"></div>
+          <span id="mw-market-text">Closed</span>
+        </div>
+        <div class="mw-user">
+          <div class="mw-avatar">{{ (username or "U")[0]|upper }}</div>
+          <div>
+            <div class="mw-user-name">{{ username }}</div>
+            <div class="mw-user-role">{{ "Admin" if is_admin else "Investor" }}</div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <div class="mw-ticker">
+      <div class="mw-ticker-scroll" id="mw-ticker-scroll"></div>
+    </div>
+
+    <div class="mw-pulse" id="mw-pulse">
+      <div class="pulse-tile"><div class="pulse-label">Advancers</div><div class="pulse-value up" id="p-adv">—</div><div class="pulse-sub">stocks trading up</div></div>
+      <div class="pulse-tile"><div class="pulse-label">Decliners</div><div class="pulse-value dn" id="p-dec">—</div><div class="pulse-sub">stocks trading down</div></div>
+      <div class="pulse-tile"><div class="pulse-label">Unchanged</div><div class="pulse-value" id="p-flat">—</div><div class="pulse-sub">flat vs session open</div></div>
+      <div class="pulse-tile"><div class="pulse-label">Market Demand</div><div class="pulse-value" id="p-demand">—</div><div class="pulse-sub">avg. bid-side pressure</div></div>
+      <div class="pulse-tile"><div class="pulse-label">Leading Sector</div><div class="pulse-value" id="p-sector" style="font-size:15px;">—</div><div class="pulse-sub" id="p-sector-sub">by avg. change</div></div>
+    </div>
+
+    <div class="mw-body">
+      <!-- LIST PANEL -->
+      <section class="mw-panel">
+        <div class="panel-head">
+          <input class="mw-search" id="mw-search" type="text" placeholder="Search symbol or company…" oninput="renderList()" />
+          <select class="mw-select" id="mw-sort" onchange="renderList()">
+            <option value="imbalance">Sort: Demand/Supply</option>
+            <option value="change">Sort: % Change</option>
+            <option value="price">Sort: Price</option>
+            <option value="az">Sort: A–Z</option>
+          </select>
+        </div>
+        <div class="mw-list-scroll" id="mw-list"></div>
+      </section>
+
+      <!-- DETAIL PANEL -->
+      <section class="mw-panel">
+        <div class="mw-detail-scroll" id="mw-detail">
+          <div class="mw-empty"><div class="ic">📡</div><div>Loading market depth…</div></div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      const state = {
+        overview: [],
+        selected: null,
+        marketOpen: false,
+        depthChart: null,
+        priceChart: null,
+      };
+
+      function fmtMoney(n) {
+        return "GHS " + Number(n).toLocaleString("en-GH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      }
+      function fmtInt(n) {
+        return Number(n).toLocaleString("en-GH", { maximumFractionDigits: 0 });
+      }
+
+      async function fetchOverview() {
+        try {
+          const r = await fetch("/api/market_watch/overview");
+          if (!r.ok) return;
+          const data = await r.json();
+          state.overview = data.stocks || [];
+          state.marketOpen = data.market_open;
+          if (!state.selected && state.overview.length) {
+            const top = [...state.overview].sort((a, b) => Math.abs(b.change_pct) - Math.abs(a.change_pct))[0];
+            state.selected = top.symbol;
+          }
+          updateHeader();
+          renderPulse();
+          renderTicker();
+          renderList();
+        } catch (e) {}
+      }
+
+      async function fetchDepth() {
+        if (!state.selected) return;
+        try {
+          const r = await fetch(`/api/market_watch/depth/${encodeURIComponent(state.selected)}`);
+          if (!r.ok) return;
+          const data = await r.json();
+          renderDetail(data);
+        } catch (e) {}
+      }
+
+      function updateHeader() {
+        const pill = document.getElementById("mw-market-pill");
+        const txt = document.getElementById("mw-market-text");
+        pill.className = "market-status-pill" + (state.marketOpen ? "" : " closed");
+        txt.textContent = state.marketOpen ? "Market Open" : "Market Closed";
+        document.getElementById("mw-updated").textContent =
+          "Updated " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      }
+
+      function renderPulse() {
+        const rows = state.overview;
+        if (!rows.length) return;
+        const adv = rows.filter((s) => s.change_pct > 0).length;
+        const dec = rows.filter((s) => s.change_pct < 0).length;
+        const flat = rows.length - adv - dec;
+        const avgDemand = rows.reduce((sum, s) => sum + s.demand_pct, 0) / rows.length;
+
+        document.getElementById("p-adv").textContent = adv;
+        document.getElementById("p-dec").textContent = dec;
+        document.getElementById("p-flat").textContent = flat;
+
+        const demandEl = document.getElementById("p-demand");
+        demandEl.textContent = avgDemand.toFixed(1) + "%";
+        demandEl.className = "pulse-value " + (avgDemand >= 50 ? "up" : "dn");
+
+        const bySector = {};
+        rows.forEach((s) => {
+          if (!bySector[s.sector]) bySector[s.sector] = { total: 0, count: 0 };
+          bySector[s.sector].total += s.change_pct;
+          bySector[s.sector].count += 1;
+        });
+        let bestSector = "—", bestAvg = -Infinity;
+        Object.entries(bySector).forEach(([sec, v]) => {
+          const avg = v.total / v.count;
+          if (avg > bestAvg) { bestAvg = avg; bestSector = sec; }
+        });
+        document.getElementById("p-sector").textContent = bestSector;
+        document.getElementById("p-sector-sub").textContent =
+          (isFinite(bestAvg) ? (bestAvg >= 0 ? "▲ +" : "▼ ") + Math.abs(bestAvg).toFixed(2) + "%" : "—") + " avg.";
+      }
+
+      function renderTicker() {
+        const el = document.getElementById("mw-ticker-scroll");
+        const rows = [...state.overview].sort((a, b) => a.symbol.localeCompare(b.symbol));
+        const items = rows
+          .map((s) => {
+            const dir = s.change_pct >= 0 ? "up" : "dn";
+            const arrow = s.change_pct >= 0 ? "▲" : "▼";
+            return `<div class="tk-item" onclick="selectStock('${s.symbol}')"><span class="sym">${s.symbol}</span><span class="mono">${s.price.toFixed(2)}</span><span class="chg ${dir}">${arrow} ${Math.abs(s.change_pct).toFixed(2)}%</span></div>`;
+          })
+          .join("");
+        el.innerHTML = items + items; // duplicate for seamless scroll
+      }
+
+      function renderList() {
+        const q = document.getElementById("mw-search").value.trim().toLowerCase();
+        const sort = document.getElementById("mw-sort").value;
+        let rows = state.overview.filter(
+          (s) => !q || s.symbol.toLowerCase().includes(q) || s.name.toLowerCase().includes(q),
+        );
+        const sorters = {
+          imbalance: (a, b) => b.imbalance_pct - a.imbalance_pct,
+          change: (a, b) => b.change_pct - a.change_pct,
+          price: (a, b) => b.price - a.price,
+          az: (a, b) => a.symbol.localeCompare(b.symbol),
+        };
+        rows = rows.sort(sorters[sort] || sorters.imbalance);
+
+        const listEl = document.getElementById("mw-list");
+        if (!rows.length) {
+          listEl.innerHTML = `<div class="mw-empty"><div class="ic">🔍</div><div>No stocks match "${q}"</div></div>`;
+          return;
+        }
+        listEl.innerHTML = rows
+          .map((s) => {
+            const dir = s.change_pct >= 0 ? "up" : "dn";
+            const arrow = s.change_pct >= 0 ? "▲" : "▼";
+            const active = s.symbol === state.selected ? " active" : "";
+            return `<div class="mw-row${active}" onclick="selectStock('${s.symbol}')">
+              <div class="sym">${s.symbol}</div>
+              <div class="nm">${s.name}</div>
+              <div class="px mono">${s.price.toFixed(2)}</div>
+              <div class="cg ${dir}">${arrow} ${Math.abs(s.change_pct).toFixed(2)}%</div>
+              <div class="mw-ds-bar"><div class="d" style="width:${s.demand_pct}%"></div><div class="s" style="width:${s.supply_pct}%"></div></div>
+            </div>`;
+          })
+          .join("");
+      }
+
+      function selectStock(symbol) {
+        state.selected = symbol;
+        renderList();
+        fetchDepth();
+      }
+
+      function renderDetail(d) {
+        const dir = d.change_pct !== undefined ? d.change_pct : 0;
+        const history = d.history || [];
+        const first = history.length ? history[0].price : d.price;
+        const changePct = first ? (((d.price - first) / first) * 100) : 0;
+        const isUp = changePct >= 0;
+
+        const detailEl = document.getElementById("mw-detail");
+        detailEl.innerHTML = `
+          <div class="dt-header">
+            <div class="dt-id">
+              <div class="dt-sym">${d.symbol}</div>
+              <div class="dt-name">${d.name}</div>
+              <div class="dt-badges">
+                <span class="pill-tag">${d.sector}</span>
+                <span class="pill-tag">${d.market}</span>
+              </div>
+            </div>
+            <div class="dt-price-block">
+              <div class="dt-price mono">${fmtMoney(d.price)}</div>
+              <div class="dt-chg ${isUp ? "up" : "dn"}">${isUp ? "▲ +" : "▼ "}${Math.abs(changePct).toFixed(2)}% session</div>
+            </div>
+          </div>
+
+          <div class="ds-split">
+            <div class="ds-labels"><span class="l">DEMAND (BIDS)</span><span class="r">SUPPLY (ASKS)</span></div>
+            <div class="ds-track">
+              <div class="ds-demand" style="width:${d.demand_pct}%">${d.demand_pct}%</div>
+              <div class="ds-supply" style="width:${d.supply_pct}%">${d.supply_pct}%</div>
+            </div>
+            <div class="ds-meta">
+              <span>Bid volume: <b>${fmtInt(d.total_bid_volume)}</b></span>
+              <span>Imbalance: <b>${d.imbalance_pct > 0 ? "+" : ""}${d.imbalance_pct}%</b></span>
+              <span>Ask volume: <b>${fmtInt(d.total_ask_volume)}</b></span>
+            </div>
+          </div>
+
+          <div class="mw-card">
+            <div class="mw-card-title">Market Depth <span class="spread-tag">Spread ${d.spread.toFixed(2)}</span></div>
+            <div class="depth-chart-wrap"><canvas id="depth-chart"></canvas></div>
+            <div class="ladder">
+              <div class="ladder-col-head"><span>Bid Price</span><span style="text-align:right">Size</span></div>
+              <div class="ladder-col-head"><span>Ask Price</span><span style="text-align:right">Size</span></div>
+            </div>
+            <div class="ladder">
+              <div class="ladder-side" id="ladder-bids"></div>
+              <div class="ladder-side" id="ladder-asks"></div>
+            </div>
+          </div>
+
+          <div class="mw-card">
+            <div class="mw-card-title">Price Action</div>
+            <div class="price-chart-wrap"><canvas id="price-chart"></canvas></div>
+            <div class="pc-meta" id="pc-meta"></div>
+          </div>
+        `;
+
+        renderLadder(d);
+        renderDepthChart(d);
+        renderPriceChart(d, history);
+      }
+
+      function renderLadder(d) {
+        const maxBid = Math.max(...d.bids.map((b) => b.size), 1);
+        const maxAsk = Math.max(...d.asks.map((a) => a.size), 1);
+        document.getElementById("ladder-bids").innerHTML = d.bids
+          .map(
+            (b) => `<div class="ladder-row bid"><div class="bar" style="width:${(b.size / maxBid) * 100}%"></div><span class="p">${b.price.toFixed(2)}</span><span class="sz">${fmtInt(b.size)}</span></div>`,
+          )
+          .join("");
+        document.getElementById("ladder-asks").innerHTML = d.asks
+          .map(
+            (a) => `<div class="ladder-row ask"><div class="bar" style="width:${(a.size / maxAsk) * 100}%"></div><span class="p">${a.price.toFixed(2)}</span><span class="sz">${fmtInt(a.size)}</span></div>`,
+          )
+          .join("");
+      }
+
+      function renderDepthChart(d) {
+        if (typeof Chart === "undefined") return;
+        const bidsAsc = [...d.bids].reverse(); // lowest price -> spread
+        const labels = [...bidsAsc.map((b) => b.price.toFixed(2)), ...d.asks.map((a) => a.price.toFixed(2))];
+        const demandData = [...bidsAsc.map((b) => b.total), ...d.asks.map(() => null)];
+        const supplyData = [...bidsAsc.map(() => null), ...d.asks.map((a) => a.total)];
+
+        const ctx = document.getElementById("depth-chart").getContext("2d");
+        if (state.depthChart) { state.depthChart.destroy(); state.depthChart = null; }
+        state.depthChart = new Chart(ctx, {
+          type: "line",
+          data: {
+            labels,
+            datasets: [
+              {
+                label: "Demand",
+                data: demandData,
+                stepped: "after",
+                borderColor: "#22c55e",
+                backgroundColor: "rgba(34,197,94,0.15)",
+                borderWidth: 2,
+                fill: true,
+                pointRadius: 0,
+                spanGaps: false,
+              },
+              {
+                label: "Supply",
+                data: supplyData,
+                stepped: "before",
+                borderColor: "#e63329",
+                backgroundColor: "rgba(230,51,41,0.13)",
+                borderWidth: 2,
+                fill: true,
+                pointRadius: 0,
+                spanGaps: false,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: "index", intersect: false },
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                backgroundColor: "#111848",
+                borderColor: "rgba(46,159,212,0.3)",
+                borderWidth: 1,
+                titleColor: "#2e9fd4",
+                bodyColor: "#ffffff",
+                callbacks: { label: (c) => ` ${c.dataset.label}: ${fmtInt(c.parsed.y)} shares` },
+              },
+            },
+            scales: {
+              x: { grid: { color: "rgba(255,255,255,0.04)" }, ticks: { color: "#8898aa", font: { size: 9 }, maxRotation: 0, autoSkip: true, maxTicksLimit: 8 } },
+              y: { grid: { color: "rgba(255,255,255,0.06)" }, ticks: { color: "#8898aa", font: { size: 9 }, callback: (v) => fmtInt(v) }, beginAtZero: true },
+            },
+          },
+        });
+      }
+
+      function renderPriceChart(d, history) {
+        const metaEl = document.getElementById("pc-meta");
+        if (typeof Chart === "undefined" || !history.length) {
+          metaEl.innerHTML = `<span>No tick history yet this session.</span>`;
+          return;
+        }
+        const labels = history.map((h) => new Date(h.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+        const prices = history.map((h) => h.price);
+        const first = prices[0], last = prices[prices.length - 1];
+        const high = Math.max(...prices), low = Math.min(...prices);
+        const isUp = last >= first;
+        const lineColor = isUp ? "#22c55e" : "#e63329";
+
+        metaEl.innerHTML = `<span>Open: <b>${first.toFixed(2)}</b></span><span>High: <b>${high.toFixed(2)}</b></span><span>Low: <b>${low.toFixed(2)}</b></span><span>Ticks: <b>${prices.length}</b></span>`;
+
+        const ctx = document.getElementById("price-chart").getContext("2d");
+        const gradient = ctx.createLinearGradient(0, 0, 0, 200);
+        gradient.addColorStop(0, isUp ? "rgba(34,197,94,0.22)" : "rgba(230,51,41,0.18)");
+        gradient.addColorStop(1, "rgba(0,0,0,0)");
+
+        if (state.priceChart) { state.priceChart.destroy(); state.priceChart = null; }
+        state.priceChart = new Chart(ctx, {
+          type: "line",
+          data: {
+            labels,
+            datasets: [{
+              data: prices,
+              borderColor: lineColor,
+              borderWidth: 2,
+              pointRadius: 0,
+              pointHoverRadius: 4,
+              fill: true,
+              backgroundColor: gradient,
+              tension: 0.3,
+            }],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: "index", intersect: false },
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                backgroundColor: "#111848", borderColor: "rgba(46,159,212,0.3)", borderWidth: 1,
+                titleColor: "#2e9fd4", bodyColor: "#ffffff",
+                callbacks: { label: (c) => ` GHS ${c.parsed.y.toFixed(2)}` },
+              },
+            },
+            scales: {
+              x: { display: false },
+              y: { grid: { color: "rgba(255,255,255,0.06)" }, ticks: { color: "#8898aa", font: { size: 9 } } },
+            },
+          },
+        });
+      }
+
+      async function init() {
+        await fetchOverview();
+        await fetchDepth();
+        setInterval(fetchOverview, 10000);
+        setInterval(fetchDepth, 5000);
+        setInterval(updateHeader, 1000);
+      }
+      init();
+    </script>
+  </body>
+</html>

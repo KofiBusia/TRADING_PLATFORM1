@@ -475,6 +475,58 @@ def maybe_tick_prices():
 def _tick_prices_before_request():
     maybe_tick_prices()
 
+
+def generate_order_book(stock, levels=8):
+    """Synthetic bid/ask depth for the Market Watch view. There's no real
+    matching engine behind this simulator, so the book is derived from the
+    stock's own price - seeded on (symbol, price, tick-bucket) so it stays
+    put between polls within the same PRICE_UPDATE_INTERVAL window instead
+    of flickering on every request, and skewed by the last price move so a
+    stock that just ticked up shows heavier demand-side depth than supply,
+    matching the direction it's already moving in."""
+    price = stock["price"]
+    history = stock.get("history", [])
+    momentum = 0.0
+    if len(history) >= 2 and history[-2]["price"]:
+        momentum = (history[-1]["price"] - history[-2]["price"]) / history[-2]["price"]
+    imbalance = max(-0.4, min(0.4, momentum * 15))
+
+    bucket = int(last_price_update // PRICE_UPDATE_INTERVAL) if last_price_update else 0
+    rng = random.Random(f"{stock['symbol']}:{round(price, 4)}:{bucket}")
+
+    tick = max(round(price * 0.0015, 4), 0.01)
+    bids, asks = [], []
+    cum_bid = cum_ask = 0
+    for i in range(1, levels + 1):
+        base = rng.randint(300, 5000) * (levels - i + 2)
+        bid_size = max(50, int(base * (1 + imbalance)))
+        ask_size = max(50, int(base * (1 - imbalance)))
+        cum_bid += bid_size
+        cum_ask += ask_size
+        bids.append({
+            "price": round(max(0.01, price - tick * i), 2),
+            "size": bid_size,
+            "total": cum_bid,
+        })
+        asks.append({
+            "price": round(price + tick * i, 2),
+            "size": ask_size,
+            "total": cum_ask,
+        })
+
+    total = cum_bid + cum_ask
+    demand_pct = round(cum_bid / total * 100, 1) if total else 50.0
+    return {
+        "bids": bids,
+        "asks": asks,
+        "spread": round(asks[0]["price"] - bids[0]["price"], 2),
+        "demand_pct": demand_pct,
+        "supply_pct": round(100 - demand_pct, 1),
+        "imbalance_pct": round(imbalance * 100, 1),
+        "total_bid_volume": cum_bid,
+        "total_ask_volume": cum_ask,
+    }
+
 # ─────────────────────────────────────────────
 # Auth helpers
 # ─────────────────────────────────────────────
@@ -643,6 +695,17 @@ def admin_dashboard():
 def manual():
     return render_template("manual.html")
 
+
+@app.route("/market-watch")
+def market_watch_page():
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+    return render_template(
+        "market_watch.html",
+        username=session.get("username"),
+        is_admin=is_admin(),
+    )
+
 # ─────────────────────────────────────────────
 # API — stocks & portfolio
 # ─────────────────────────────────────────────
@@ -653,6 +716,56 @@ def get_stocks():
     for s in data:
         s['market_open'] = market_open
     return jsonify(data)
+
+
+@app.route("/api/market_watch/overview")
+def api_market_watch_overview():
+    if "user_id" not in session:
+        return jsonify({"error": "Not authenticated"}), 401
+    with stock_lock:
+        rows = []
+        for s in stocks:
+            book = generate_order_book(s)
+            history = s.get("history", [])
+            first = history[0]["price"] if history else s["price"]
+            change_pct = round(((s["price"] - first) / first) * 100, 2) if first else 0.0
+            rows.append({
+                "symbol": s["symbol"],
+                "name": s["name"],
+                "sector": s["sector"],
+                "market": s["market"],
+                "price": s["price"],
+                "change_pct": change_pct,
+                "demand_pct": book["demand_pct"],
+                "supply_pct": book["supply_pct"],
+                "imbalance_pct": book["imbalance_pct"],
+                "spread": book["spread"],
+                "best_bid": book["bids"][0]["price"] if book["bids"] else None,
+                "best_ask": book["asks"][0]["price"] if book["asks"] else None,
+            })
+    return jsonify({"market_open": market_open, "stocks": rows})
+
+
+@app.route("/api/market_watch/depth/<symbol>")
+def api_market_watch_depth(symbol):
+    if "user_id" not in session:
+        return jsonify({"error": "Not authenticated"}), 401
+    with stock_lock:
+        stock = next((s for s in stocks if s["symbol"] == symbol.upper()), None)
+        if not stock:
+            return jsonify({"error": "Stock not found"}), 404
+        book = generate_order_book(stock)
+        payload = {
+            "symbol": stock["symbol"],
+            "name": stock["name"],
+            "sector": stock["sector"],
+            "market": stock["market"],
+            "price": stock["price"],
+            "history": list(stock.get("history", [])),
+            "market_open": market_open,
+        }
+        payload.update(book)
+    return jsonify(payload)
 
 
 @app.route("/api/price_engine_status")

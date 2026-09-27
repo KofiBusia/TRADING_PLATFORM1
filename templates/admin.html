@@ -697,14 +697,14 @@
         white-space: nowrap;
       }
       /* Cash (5th) isn't meaningful on a public display, so hide it and
-         redistribute its width. Actions (9th) stays, but only the delete
-         button - admin can still remove a trader without leaving full
-         screen, without cluttering the display with view/reset buttons. */
+         redistribute its width. Actions (9th) stays, but only view/delete -
+         admin can still pull up a trader's live portfolio or remove them
+         without leaving full screen, without cluttering the display with
+         the reset button. */
       body.lb-presentation .lb-table th:nth-child(5),
       body.lb-presentation .lb-table td:nth-child(5) {
         display: none;
       }
-      body.lb-presentation .lb-table td:nth-child(9) .btn-view,
       body.lb-presentation .lb-table td:nth-child(9) .btn-reset-user {
         display: none;
       }
@@ -1331,6 +1331,9 @@
         </div>
         <div class="nav-item" onclick="showView('stocks')">
           <span class="icon">📈</span>Market Data
+        </div>
+        <div class="nav-item" onclick="window.open('/market-watch', '_blank')">
+          <span class="icon">🌐</span>Market Watch
         </div>
         <div class="nav-label">Controls</div>
         <div class="nav-item" onclick="showView('price-control')">
