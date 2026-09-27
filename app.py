@@ -21,6 +21,12 @@ app = Flask(__name__, instance_relative_config=True)
 app.secret_key = os.environ.get('SECRET_KEY', 'yin_tradesim_secret_2025_change_me')
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=30)
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+# debug=False (see bottom of file) means Jinja's default auto_reload falls
+# back to that, i.e. off - templates get compiled once and cached forever,
+# so an edited .html file keeps serving stale content until the process
+# restarts. Force it on independent of debug so template edits show up on
+# the next request; this does not enable the Werkzeug debugger/reloader.
+app.config['TEMPLATES_AUTO_RELOAD'] = True
 
 # ─────────────────────────────────────────────
 # Persistent user storage
@@ -407,17 +413,56 @@ def apply_stop_losses():
     return execs
 
 
+SECTOR_MOMENTUM = {}
+
+
 def simulate_price_tick():
-    """In-built random walk that drives every price tick."""
+    """Price walk driven primarily by each stock's demand/supply
+    imbalance ('bias'): more demand than supply pushes the price up,
+    more supply than demand pushes it down - the same imbalance that
+    Market Watch's order book/depth chart is generated from (see
+    generate_order_book), so what a trader sees there is the actual
+    cause of the next price move, not a cosmetic effect derived from it.
+
+    Layered on top, since real prices aren't moved by order flow alone:
+      - sector momentum: stocks in the same sector drift together
+      - mean reversion: a gentle pull back toward a slow-moving "fair
+        value" so imbalance/momentum can't drift a price away forever
+      - noise: residual microstructure randomness
+      - shocks: a small per-tick chance of a news-sized jump
+    """
     with stock_lock:
         ts = datetime.now().isoformat()
+
+        sectors = {s["sector"] for s in stocks}
+        for sector in sectors:
+            m = SECTOR_MOMENTUM.get(sector, 0.0)
+            SECTOR_MOMENTUM[sector] = max(-1.0, min(1.0, m * 0.9 + random.uniform(-0.25, 0.25)))
+
         for stock in stocks:
-            if stock["price"] > 0:
-                stock["price"] = max(0.01, round(
-                    stock["price"] * (1 + random.uniform(-0.02, 0.02)), 2))
-                stock["history"].append({"time": ts, "price": stock["price"]})
-                if len(stock["history"]) > 100:
-                    stock["history"].pop(0)
+            if stock["price"] <= 0:
+                continue
+
+            bias = stock.get("bias", 0.0)
+            bias = max(-1.0, min(1.0, bias * 0.85 + random.uniform(-0.15, 0.15)))
+            stock["bias"] = bias
+
+            fair_value = stock.get("fair_value", stock["price"])
+            fair_value = max(0.01, fair_value * (1 + random.uniform(-0.0015, 0.0015)))
+            stock["fair_value"] = fair_value
+            deviation = (stock["price"] - fair_value) / fair_value
+
+            demand_supply_effect = bias * 0.012
+            sector_effect         = SECTOR_MOMENTUM.get(stock["sector"], 0.0) * 0.006
+            mean_reversion        = max(-0.008, min(0.008, -0.08 * deviation))
+            noise                 = random.uniform(-0.008, 0.008)
+            shock                 = random.uniform(-0.035, 0.035) if random.random() < 0.03 else 0.0
+
+            change_pct = demand_supply_effect + sector_effect + mean_reversion + noise + shock
+            stock["price"] = max(0.01, round(stock["price"] * (1 + change_pct), 2))
+            stock["history"].append({"time": ts, "price": stock["price"]})
+            if len(stock["history"]) > 100:
+                stock["history"].pop(0)
 
 
 PRICE_UPDATE_INTERVAL = 20  # seconds
@@ -477,19 +522,14 @@ def _tick_prices_before_request():
 
 
 def generate_order_book(stock, levels=8):
-    """Synthetic bid/ask depth for the Market Watch view. There's no real
-    matching engine behind this simulator, so the book is derived from the
-    stock's own price - seeded on (symbol, price, tick-bucket) so it stays
-    put between polls within the same PRICE_UPDATE_INTERVAL window instead
-    of flickering on every request, and skewed by the last price move so a
-    stock that just ticked up shows heavier demand-side depth than supply,
-    matching the direction it's already moving in."""
+    """Bid/ask depth for the Market Watch view, built from the same 'bias'
+    field that simulate_price_tick() reads to move the price - so this is
+    the actual cause of the stock's last/next move, not a cosmetic effect
+    computed backwards from it. Levels are seeded on (symbol, price,
+    tick-bucket) so the book stays put between polls within the same
+    PRICE_UPDATE_INTERVAL window instead of flickering on every request."""
     price = stock["price"]
-    history = stock.get("history", [])
-    momentum = 0.0
-    if len(history) >= 2 and history[-2]["price"]:
-        momentum = (history[-1]["price"] - history[-2]["price"]) / history[-2]["price"]
-    imbalance = max(-0.4, min(0.4, momentum * 15))
+    imbalance = max(-0.4, min(0.4, stock.get("bias", 0.0)))
 
     bucket = int(last_price_update // PRICE_UPDATE_INTERVAL) if last_price_update else 0
     rng = random.Random(f"{stock['symbol']}:{round(price, 4)}:{bucket}")

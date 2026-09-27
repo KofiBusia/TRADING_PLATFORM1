@@ -239,7 +239,7 @@
       .tv-row { display: flex; justify-content: space-between; align-items: center; font-size: 12.5px; color: var(--gray-light); margin-bottom: 10px; }
       .tv-row b { font-family: "JetBrains Mono", monospace; color: var(--white); font-weight: 700; }
       .tv-label { display: block; font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--gray); margin: 14px 0 6px; }
-      .tv-body input[type="number"] { width: 100%; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; color: var(--white); font-family: "JetBrains Mono", monospace; font-size: 15px; }
+      .tv-body input[type="number"] { width: 100%; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; color: var(--white); font-family: "JetBrains Mono", monospace; font-size: 16px; }
       .tv-body input[type="number"]:focus { outline: none; border-color: var(--sky); }
       .tv-total-row { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 13.5px; }
       .tv-total-row b { font-size: 16px; color: var(--sky-light); }
@@ -269,6 +269,7 @@
 
       /* order book ladder */
       .ladder { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px; }
+      .ladder-col { display: flex; flex-direction: column; min-width: 0; }
       .ladder-col-head { display: grid; grid-template-columns: 1fr 1fr; font-size: 9.5px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: var(--gray); padding-bottom: 6px; }
       .ladder-side { display: flex; flex-direction: column; gap: 2px; }
       .ladder-row { position: relative; display: grid; grid-template-columns: 1fr 1fr; font-size: 11.5px; font-family: "JetBrains Mono", monospace; padding: 4px 6px; border-radius: 4px; overflow: hidden; }
@@ -293,11 +294,56 @@
       ::-webkit-scrollbar-track { background: transparent; }
 
       @media (max-width: 640px) {
-        .mw-header { padding: 0 14px; gap: 12px; }
+        body { padding-bottom: env(safe-area-inset-bottom); }
+        .mw-header {
+          height: auto;
+          min-height: 56px;
+          padding: 10px 14px;
+          gap: 10px;
+          flex-wrap: wrap;
+          row-gap: 8px;
+        }
+        .mw-title { font-size: 17px; gap: 8px; }
+        .mw-back { padding: 6px 10px; font-size: 11px; }
         .mw-updated { display: none; }
+        .mw-header-right { gap: 10px; row-gap: 8px; flex-wrap: wrap; }
+        .mw-cash { font-size: 10.5px; }
+        .mw-user-name { max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
         .mw-pulse { grid-template-columns: repeat(2, 1fr); }
-        .ladder { grid-template-columns: 1fr; }
-        .dt-price-block { margin-left: 0; text-align: left; }
+        .pulse-tile { padding: 10px 14px; }
+        .pulse-value { font-size: 17px; }
+
+        .mv-card { padding: 12px 14px 4px; }
+
+        .panel-head { padding: 12px 14px 10px; }
+        .mw-list-scroll { padding: 0 6px 10px; }
+        .mw-row {
+          grid-template-columns: 54px 1fr 60px 52px;
+          gap: 8px;
+          padding: 10px 8px;
+        }
+        .mw-row .sym { font-size: 12px; }
+        .mw-row .px, .mw-row .cg { font-size: 11px; }
+
+        .mw-detail-scroll { padding: 0 14px 24px; }
+        .dt-header { gap: 12px; padding-bottom: 14px; margin-bottom: 14px; }
+        .dt-id .dt-sym { font-size: 24px; }
+        .dt-price { font-size: 24px; }
+        .dt-price-block { margin-left: 0; text-align: left; width: 100%; }
+        .dt-actions { justify-content: stretch; margin-top: 14px; }
+        .btn-trade { flex: 1; padding: 13px 16px; font-size: 13px; }
+
+        .mw-card { padding: 13px; margin-bottom: 14px; }
+        .ds-track { height: 26px; }
+        .depth-chart-wrap { height: 180px; }
+        .ladder { grid-template-columns: 1fr; gap: 18px; }
+        .price-chart-wrap { height: 170px; }
+        .pc-meta { gap: 10px 16px; }
+
+        .tv-modal { width: 100%; }
+        .tv-foot { flex-direction: column-reverse; }
+        .tv-cancel { flex: none; }
       }
     </style>
   </head>
@@ -614,12 +660,14 @@
             <div class="mw-card-title">Market Depth <span class="spread-tag">Spread ${d.spread.toFixed(2)}</span></div>
             <div class="depth-chart-wrap"><canvas id="depth-chart"></canvas></div>
             <div class="ladder">
-              <div class="ladder-col-head"><span>Bid Price</span><span style="text-align:right">Size</span></div>
-              <div class="ladder-col-head"><span>Ask Price</span><span style="text-align:right">Size</span></div>
-            </div>
-            <div class="ladder">
-              <div class="ladder-side" id="ladder-bids"></div>
-              <div class="ladder-side" id="ladder-asks"></div>
+              <div class="ladder-col">
+                <div class="ladder-col-head"><span>Bid Price</span><span style="text-align:right">Size</span></div>
+                <div class="ladder-side" id="ladder-bids"></div>
+              </div>
+              <div class="ladder-col">
+                <div class="ladder-col-head"><span>Ask Price</span><span style="text-align:right">Size</span></div>
+                <div class="ladder-side" id="ladder-asks"></div>
+              </div>
             </div>
           </div>
 
