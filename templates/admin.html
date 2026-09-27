@@ -2444,8 +2444,15 @@
         }
       }
 
+      // Anchored to wall-clock time (Date.now()), not decremented by 1 per
+      // setInterval firing: setInterval isn't guaranteed to fire exactly
+      // every 1000ms (background-tab throttling, a busy main thread, etc.
+      // all delay it), so naive "-1 per tick" silently falls behind real
+      // time - which is what made the voice countdown (and the visible
+      // clock) drift/jump instead of counting smoothly.
       let adminTimerActive = false;
       let adminTimerRemaining = null;
+      let adminTimerSyncedAt = null; // Date.now() when adminTimerRemaining was last set from the server
 
       async function refreshTimerStatus() {
         try {
@@ -2453,13 +2460,16 @@
           const d = await r.json();
           adminTimerActive = d.active;
           adminTimerRemaining = d.remaining;
+          adminTimerSyncedAt = Date.now();
           renderTimerStatus();
         } catch (e) {}
       }
 
       function tickTimerStatus() {
         if (!adminTimerActive || adminTimerRemaining === null) return;
-        adminTimerRemaining = Math.max(0, adminTimerRemaining - 1);
+        const elapsed = (Date.now() - adminTimerSyncedAt) / 1000;
+        adminTimerRemaining = Math.max(0, Math.round(adminTimerRemaining - elapsed));
+        adminTimerSyncedAt = Date.now();
         renderTimerStatus();
         speakCountdown(adminTimerRemaining);
       }
@@ -2494,16 +2504,48 @@
       // so calling speechSynthesis.cancel() on every 1s tick (to keep things
       // "crisp") was killing each number before it ever became audible -
       // only the very last utterance in a burst was ever actually heard.
+      //
+      // But queuing everything unconditionally has the opposite problem:
+      // if any single utterance (startup latency + speaking time) takes
+      // longer than 1s, Chrome's queue backs up and the voice drifts
+      // further behind the visual clock with every tick. So only one
+      // utterance is ever in flight - a new number due while one is still
+      // playing REPLACES whatever was queued next (never appends), so the
+      // voice always says the freshest number once its mouth is free
+      // rather than working through a growing backlog. Worst case it skips
+      // a number it's behind on; it never lags.
+      let speechInFlight = false;
+      let pendingSpeak = null;
       function speakCountdownNumber(text, rate) {
         if (!("speechSynthesis" in window)) return;
+        if (speechInFlight) {
+          pendingSpeak = { text, rate };
+          return;
+        }
+        actuallySpeak(text, rate);
+      }
+      function actuallySpeak(text, rate) {
         try {
           const utter = new SpeechSynthesisUtterance(text);
           const voice = pickCountdownVoice();
           if (voice) utter.voice = voice;
           utter.pitch = 1.15;
           utter.rate = rate;
+          speechInFlight = true;
+          const finish = () => {
+            speechInFlight = false;
+            if (pendingSpeak) {
+              const next = pendingSpeak;
+              pendingSpeak = null;
+              actuallySpeak(next.text, next.rate);
+            }
+          };
+          utter.onend = finish;
+          utter.onerror = finish;
           window.speechSynthesis.speak(utter);
-        } catch (e) {}
+        } catch (e) {
+          speechInFlight = false;
+        }
       }
       function pickCountdownVoice() {
         const voices = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
@@ -2551,6 +2593,7 @@
         if (!adminTimerActive || remaining > 10) {
           lastSpokenCountdownSecond = null;
           timesUpAnnounced = false;
+          pendingSpeak = null;
           return;
         }
         if (remaining < 0 || remaining === lastSpokenCountdownSecond) return;
@@ -2559,11 +2602,11 @@
         if (remaining === 0) {
           if (timesUpAnnounced) return;
           timesUpAnnounced = true;
-          speakCountdownNumber("Time's up!", 1.05);
+          speakCountdownNumber("Time's up!", 1.1);
           ringBellFor(10);
           return;
         }
-        speakCountdownNumber(String(remaining), 1.15);
+        speakCountdownNumber(String(remaining), 1.4);
       }
 
       function renderTimerStatus() {
