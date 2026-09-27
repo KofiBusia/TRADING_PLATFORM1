@@ -2306,53 +2306,47 @@
       }
       document.addEventListener("click", primeSpeechSynthesis, { once: true });
 
-      // Countdown numbers are QUEUED, never cancelled mid-tick: Windows/Mac
-      // TTS engines take a couple hundred ms just to start producing audio,
-      // so calling speechSynthesis.cancel() on every 1s tick (to keep things
-      // "crisp") was killing each number before it ever became audible -
-      // only the very last utterance in a burst was ever actually heard.
-      //
-      // But queuing everything unconditionally has the opposite problem:
-      // if any single utterance (startup latency + speaking time) takes
-      // longer than 1s, Chrome's queue backs up and the voice drifts
-      // further behind the visual clock with every tick. So only one
-      // utterance is ever in flight - a new number due while one is still
-      // playing REPLACES whatever was queued next (never appends), so the
-      // voice always says the freshest number once its mouth is free
-      // rather than working through a growing backlog. Worst case it skips
-      // a number it's behind on; it never lags.
-      let speechInFlight = false;
-      let pendingSpeak = null;
+      // Numbers are pre-scheduled against absolute wall-clock offsets from
+      // the moment the countdown window is entered (setTimeout(fn, n*1000)
+      // for each), NOT spoken reactively once per setInterval tick. A
+      // reactive "speak on every tick" design is structurally unable to
+      // guarantee no drift: however you react to a slow utterance - queue
+      // it (falls further behind every time), cancel it (never becomes
+      // audible), or replace the pending one (silently skips numbers) -
+      // the tick you're reacting to has already happened late. Scheduling
+      // every number's START time up front sidesteps that entirely: each
+      // one fires exactly on schedule regardless of how long its
+      // predecessor took to say. Chrome's speech queue still serializes
+      // the actual audio, so a slow "10" simply means "9" starts playing
+      // the instant "10" ends instead of leaving a gap - it never causes
+      // "9" to be skipped or to permanently fall behind.
+      let countdownGeneration = 0;
+      let countdownScheduled = false;
+      function scheduleCountdown(startRemaining) {
+        for (let n = startRemaining; n >= 1; n--) {
+          const gen = countdownGeneration;
+          setTimeout(() => {
+            if (gen !== countdownGeneration) return; // timer was stopped/reset since this was scheduled
+            speakCountdownNumber(String(n), 1.3);
+          }, (startRemaining - n) * 1000);
+        }
+        const gen = countdownGeneration;
+        setTimeout(() => {
+          if (gen !== countdownGeneration) return;
+          speakCountdownNumber("Time's up!", 1.1);
+          ringBellFor(10);
+        }, startRemaining * 1000);
+      }
       function speakCountdownNumber(text, rate) {
         if (!("speechSynthesis" in window)) return;
-        if (speechInFlight) {
-          pendingSpeak = { text, rate };
-          return;
-        }
-        actuallySpeak(text, rate);
-      }
-      function actuallySpeak(text, rate) {
         try {
           const utter = new SpeechSynthesisUtterance(text);
           const voice = pickCountdownVoice();
           if (voice) utter.voice = voice;
           utter.pitch = 1.15;
           utter.rate = rate;
-          speechInFlight = true;
-          const finish = () => {
-            speechInFlight = false;
-            if (pendingSpeak) {
-              const next = pendingSpeak;
-              pendingSpeak = null;
-              actuallySpeak(next.text, next.rate);
-            }
-          };
-          utter.onend = finish;
-          utter.onerror = finish;
           window.speechSynthesis.speak(utter);
-        } catch (e) {
-          speechInFlight = false;
-        }
+        } catch (e) {}
       }
       function pickCountdownVoice() {
         const voices = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
@@ -2394,26 +2388,15 @@
         }
       }
 
-      let lastSpokenCountdownSecond = null;
-      let timesUpAnnounced = false;
       function speakCountdown(remaining) {
         if (!sessionTimerActive || remaining > 10) {
-          lastSpokenCountdownSecond = null;
-          timesUpAnnounced = false;
-          pendingSpeak = null;
+          countdownGeneration++; // invalidates any still-pending setTimeouts from a prior run
+          countdownScheduled = false;
           return;
         }
-        if (remaining < 0 || remaining === lastSpokenCountdownSecond) return;
-        lastSpokenCountdownSecond = remaining;
-
-        if (remaining === 0) {
-          if (timesUpAnnounced) return;
-          timesUpAnnounced = true;
-          speakCountdownNumber("Time's up!", 1.1);
-          ringBellFor(10);
-          return;
-        }
-        speakCountdownNumber(String(remaining), 1.4);
+        if (countdownScheduled) return; // whole sequence for this run is already scheduled
+        countdownScheduled = true;
+        scheduleCountdown(remaining);
       }
 
       function renderSessionTimer(remaining) {
