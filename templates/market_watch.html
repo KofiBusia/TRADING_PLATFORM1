@@ -107,6 +107,8 @@
       .market-status-pill.closed { background: rgba(230, 51, 41, 0.1); border-color: rgba(230, 51, 41, 0.2); color: var(--red); }
       .status-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; animation: blink 1.5s infinite; }
       .mw-updated { font-size: 11px; color: var(--gray); white-space: nowrap; }
+      .mw-cash { display: none; align-items: center; gap: 7px; font-size: 11px; color: var(--gray); }
+      .mw-cash b { font-family: "JetBrains Mono", monospace; color: var(--sky-light); font-weight: 700; }
       .mw-user { display: flex; align-items: center; gap: 8px; padding-left: 14px; border-left: 1px solid var(--border); }
       .mw-avatar {
         width: 30px; height: 30px; border-radius: 8px; background: linear-gradient(135deg, var(--sky), var(--navy));
@@ -214,6 +216,40 @@
       .dt-chg { font-size: 14px; font-weight: 800; margin-top: 4px; }
       .dt-chg.up { color: var(--green); }
       .dt-chg.dn { color: var(--red); }
+      .dt-actions { display: flex; gap: 8px; margin-top: 12px; justify-content: flex-end; }
+      .btn-trade { border: none; border-radius: 8px; padding: 9px 22px; font-size: 12.5px; font-weight: 800; letter-spacing: 0.3px; cursor: pointer; transition: filter 0.12s, transform 0.06s; text-transform: uppercase; }
+      .btn-trade:active { transform: scale(0.97); }
+      .btn-trade.buy { background: var(--green); color: #06230f; }
+      .btn-trade.sell { background: var(--red); color: #2b0503; }
+      .btn-trade:hover { filter: brightness(1.1); }
+      .dt-admin-note { font-size: 11px; color: var(--gray); margin-top: 10px; font-style: italic; }
+
+      /* ===== TRADE MODAL ===== */
+      .tv-overlay {
+        display: none; position: fixed; inset: 0; background: rgba(6, 10, 30, 0.72);
+        backdrop-filter: blur(2px); z-index: 200; align-items: center; justify-content: center;
+      }
+      .tv-overlay.open { display: flex; }
+      .tv-modal { width: 360px; max-width: calc(100vw - 32px); background: var(--navy-mid); border: 1px solid var(--border-strong); border-radius: 14px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
+      .tv-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 18px; border-bottom: 1px solid var(--border); }
+      .tv-head #tv-title { font-family: "Barlow Condensed", sans-serif; font-size: 18px; font-weight: 800; }
+      .tv-close { background: none; border: none; color: var(--gray-light); font-size: 16px; cursor: pointer; line-height: 1; }
+      .tv-close:hover { color: var(--white); }
+      .tv-body { padding: 18px; }
+      .tv-row { display: flex; justify-content: space-between; align-items: center; font-size: 12.5px; color: var(--gray-light); margin-bottom: 10px; }
+      .tv-row b { font-family: "JetBrains Mono", monospace; color: var(--white); font-weight: 700; }
+      .tv-label { display: block; font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--gray); margin: 14px 0 6px; }
+      .tv-body input[type="number"] { width: 100%; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; color: var(--white); font-family: "JetBrains Mono", monospace; font-size: 15px; }
+      .tv-body input[type="number"]:focus { outline: none; border-color: var(--sky); }
+      .tv-total-row { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 13.5px; }
+      .tv-total-row b { font-size: 16px; color: var(--sky-light); }
+      .tv-error { display: none; margin-top: 12px; background: rgba(230, 51, 41, 0.12); border: 1px solid rgba(230, 51, 41, 0.3); color: #ff8a80; border-radius: 8px; padding: 9px 11px; font-size: 11.5px; }
+      .tv-foot { display: flex; gap: 10px; padding: 14px 18px 18px; }
+      .tv-cancel { flex: 1; background: var(--card); border: 1px solid var(--border); color: var(--gray-light); border-radius: 8px; padding: 10px; font-size: 12.5px; font-weight: 700; cursor: pointer; }
+      .tv-submit { flex: 2; border: none; border-radius: 8px; padding: 10px; font-size: 12.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.3px; cursor: pointer; }
+      .tv-submit.buy { background: var(--green); color: #06230f; }
+      .tv-submit.sell { background: var(--red); color: #2b0503; }
+      .tv-submit:disabled { opacity: 0.6; cursor: not-allowed; }
 
       .ds-split { margin-bottom: 22px; }
       .ds-labels { display: flex; justify-content: space-between; font-size: 11px; font-weight: 700; margin-bottom: 7px; }
@@ -274,6 +310,7 @@
       </div>
       <div class="mw-header-right">
         <div class="mw-updated" id="mw-updated">Loading…</div>
+        <div class="mw-cash" id="mw-cash">Cash <b id="mw-cash-val">—</b></div>
         <div class="market-status-pill closed" id="mw-market-pill">
           <div class="status-dot"></div>
           <span id="mw-market-text">Closed</span>
@@ -349,7 +386,12 @@
         marketOpen: false,
         depthChart: null,
         priceChart: null,
+        currentDetail: null,
+        cash: 0,
+        holdings: {},
       };
+      const IS_ADMIN = {{ "true" if is_admin else "false" }};
+      const tradeState = { mode: "buy", symbol: null, price: 0 };
 
       function fmtMoney(n) {
         return "GHS " + Number(n).toLocaleString("en-GH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -524,11 +566,18 @@
       }
 
       function renderDetail(d) {
+        state.currentDetail = d;
         const dir = d.change_pct !== undefined ? d.change_pct : 0;
         const history = d.history || [];
         const first = history.length ? history[0].price : d.price;
         const changePct = first ? (((d.price - first) / first) * 100) : 0;
         const isUp = changePct >= 0;
+        const actionsHtml = IS_ADMIN
+          ? `<div class="dt-admin-note">Admin accounts don't hold a portfolio</div>`
+          : `<div class="dt-actions">
+              <button class="btn-trade buy" onclick="openTrade('buy')">Buy</button>
+              <button class="btn-trade sell" onclick="openTrade('sell')">Sell</button>
+            </div>`;
 
         const detailEl = document.getElementById("mw-detail");
         detailEl.innerHTML = `
@@ -544,6 +593,7 @@
             <div class="dt-price-block">
               <div class="dt-price mono">${fmtMoney(d.price)}</div>
               <div class="dt-chg ${isUp ? "up" : "dn"}">${isUp ? "▲ +" : "▼ "}${Math.abs(changePct).toFixed(2)}% session</div>
+              ${actionsHtml}
             </div>
           </div>
 
@@ -719,13 +769,124 @@
 
       async function init() {
         await fetchOverview();
-        await Promise.all([fetchDepth(), fetchMovers()]);
+        await Promise.all([fetchDepth(), fetchMovers(), fetchPortfolio()]);
         setInterval(fetchOverview, 10000);
         setInterval(fetchDepth, 5000);
         setInterval(fetchMovers, 15000);
+        setInterval(fetchPortfolio, 15000);
         setInterval(updateHeader, 1000);
       }
       init();
+    </script>
+
+    <!-- TRADE MODAL -->
+    <div class="tv-overlay" id="tv-overlay">
+      <div class="tv-modal">
+        <div class="tv-head">
+          <div id="tv-title">Buy</div>
+          <button class="tv-close" onclick="closeTrade()">✕</button>
+        </div>
+        <div class="tv-body">
+          <div class="tv-row"><span>Current Price</span><b id="tv-price">—</b></div>
+          <div class="tv-row"><span id="tv-avail-label">Available Cash</span><b id="tv-avail">—</b></div>
+          <label class="tv-label" for="tv-shares">Shares</label>
+          <input type="number" id="tv-shares" min="1" step="1" value="1" oninput="updateTradeTotal()" />
+          <div class="tv-row tv-total-row"><span>Estimated Total</span><b id="tv-total">—</b></div>
+          <div class="tv-error" id="tv-error"></div>
+        </div>
+        <div class="tv-foot">
+          <button class="tv-cancel" onclick="closeTrade()">Cancel</button>
+          <button class="tv-submit buy" id="tv-submit" onclick="submitTrade()">Confirm Buy</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      async function fetchPortfolio() {
+        if (IS_ADMIN) return;
+        try {
+          const r = await fetch("/api/portfolio");
+          if (!r.ok) return;
+          const d = await r.json();
+          state.cash = d.cash || 0;
+          state.holdings = {};
+          Object.entries(d.holdings || {}).forEach(([sym, h]) => {
+            state.holdings[sym] = h.shares;
+          });
+          document.getElementById("mw-cash-val").textContent = fmtMoney(state.cash);
+          document.getElementById("mw-cash").style.display = "flex";
+        } catch (e) {}
+      }
+
+      function openTrade(mode) {
+        if (IS_ADMIN || !state.currentDetail) return;
+        tradeState.mode = mode;
+        tradeState.symbol = state.currentDetail.symbol;
+        tradeState.price = state.currentDetail.price;
+
+        document.getElementById("tv-title").textContent = (mode === "buy" ? "Buy " : "Sell ") + tradeState.symbol;
+        document.getElementById("tv-price").textContent = fmtMoney(tradeState.price);
+        const submitBtn = document.getElementById("tv-submit");
+        submitBtn.textContent = mode === "buy" ? "Confirm Buy" : "Confirm Sell";
+        submitBtn.className = "tv-submit " + mode;
+        submitBtn.disabled = false;
+
+        const owned = state.holdings[tradeState.symbol] || 0;
+        document.getElementById("tv-avail-label").textContent = mode === "buy" ? "Available Cash" : "Shares Owned";
+        document.getElementById("tv-avail").textContent = mode === "buy" ? fmtMoney(state.cash || 0) : fmtInt(owned);
+
+        document.getElementById("tv-shares").value = 1;
+        document.getElementById("tv-shares").max = mode === "sell" ? owned || "" : "";
+        const errEl = document.getElementById("tv-error");
+        errEl.style.display = "none";
+        errEl.textContent = "";
+
+        updateTradeTotal();
+        document.getElementById("tv-overlay").classList.add("open");
+      }
+
+      function closeTrade() {
+        document.getElementById("tv-overlay").classList.remove("open");
+      }
+
+      function updateTradeTotal() {
+        const shares = Math.max(0, parseInt(document.getElementById("tv-shares").value, 10) || 0);
+        document.getElementById("tv-total").textContent = fmtMoney(shares * tradeState.price);
+      }
+
+      async function submitTrade() {
+        const shares = Math.max(0, parseInt(document.getElementById("tv-shares").value, 10) || 0);
+        const errEl = document.getElementById("tv-error");
+        errEl.style.display = "none";
+        if (shares <= 0) {
+          errEl.textContent = "Enter a valid number of shares.";
+          errEl.style.display = "block";
+          return;
+        }
+        const submitBtn = document.getElementById("tv-submit");
+        submitBtn.disabled = true;
+        try {
+          const r = await fetch(`/api/${tradeState.mode}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ symbol: tradeState.symbol, shares }),
+          });
+          const d = await r.json();
+          if (!r.ok || d.error) {
+            errEl.textContent = d.error || "Trade failed. Please try again.";
+            errEl.style.display = "block";
+            submitBtn.disabled = false;
+            return;
+          }
+          closeTrade();
+          fetchPortfolio();
+          fetchMovers();
+        } catch (e) {
+          errEl.textContent = "Network error. Please try again.";
+          errEl.style.display = "block";
+          submitBtn.disabled = false;
+        }
+      }
     </script>
   </body>
 </html>
