@@ -1717,21 +1717,21 @@
             <div style="display: flex; gap: 10px">
               <button
                 class="btn-primary"
-                onclick="setSessionTimer('start')"
+                onclick="setSessionTimer('start', event)"
                 style="flex: 1"
               >
                 ▶ Start
               </button>
               <button
                 class="btn-secondary"
-                onclick="setSessionTimer('reset')"
+                onclick="setSessionTimer('reset', event)"
                 style="flex: 1"
               >
                 ↺ Reset
               </button>
               <button
                 class="btn-danger-full"
-                onclick="setSessionTimer('stop')"
+                onclick="setSessionTimer('stop', event)"
                 style="flex: 1"
               >
                 ■ Stop
@@ -2414,7 +2414,13 @@
       }
 
       // ══ SESSION TIMER ══
-      async function setSessionTimer(action) {
+      // Render's free tier spins the backend down after inactivity, which
+      // can make the very next request take 30-60s+ to respond. Without a
+      // visible loading state, clicking Start while the server is cold
+      // looked exactly like a broken button - nothing happened for a long
+      // stretch, so admins understandably assumed it failed and gave up
+      // before the (perfectly successful) response ever arrived.
+      async function setSessionTimer(action, evt) {
         const body = { action };
         if (action === "start" || action === "reset") {
           const input = document.getElementById("timer-minutes-input");
@@ -2425,6 +2431,15 @@
           }
           body.minutes = minutes;
         }
+        const btn = evt?.currentTarget;
+        const originalHtml = btn ? btn.innerHTML : null;
+        if (btn) {
+          btn.disabled = true;
+          btn.innerHTML = "⏳ Working…";
+        }
+        const slowNotice = setTimeout(() => {
+          showToast("Still working - the server may be waking up from idle, this can take up to a minute", "warning");
+        }, 4000);
         try {
           const r = await fetch("/api/admin/timer", {
             method: "POST",
@@ -2440,7 +2455,13 @@
             showToast(d.error || "Failed", "error");
           }
         } catch (e) {
-          showToast("Network error", "error");
+          showToast("Network error - please try again", "error");
+        } finally {
+          clearTimeout(slowNotice);
+          if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+          }
         }
       }
 
