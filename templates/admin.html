@@ -2491,6 +2491,68 @@
         adminTimerRemaining = Math.max(0, Math.round(adminTimerRemaining - elapsed));
         adminTimerSyncedAt = Date.now();
         renderTimerStatus();
+        checkTimerEndBell(adminTimerRemaining);
+      }
+
+      // ===== END-OF-TIMER BELL =====
+      // A loud synthesized bell chime (no audio file needed) rings once the
+      // session timer hits zero. Web Audio playback needs a user gesture on
+      // record first (the browser's autoplay policy), and the timer's own
+      // tick doesn't count as one, so the AudioContext is created silently
+      // on whatever the admin clicks first anywhere on the page.
+      let audioPrimed = false;
+      let sharedAudioCtx = null;
+      function primeAudio() {
+        if (audioPrimed) return;
+        audioPrimed = true;
+        try {
+          sharedAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        } catch (e) {}
+      }
+      document.addEventListener("click", primeAudio, { once: true });
+
+      function playBellChime() {
+        const ctx = sharedAudioCtx;
+        if (!ctx) return;
+        if (ctx.state === "suspended") ctx.resume().catch(() => {});
+        const now = ctx.currentTime;
+        // Fundamental + three overtones, loud with a slow decay for a big,
+        // unmistakable "round over" bell rather than a soft chime.
+        const partials = [
+          { f: 440, g: 0.6 },
+          { f: 880, g: 0.85 },
+          { f: 1320, g: 0.5 },
+          { f: 1760, g: 0.3 },
+        ];
+        partials.forEach(({ f, g }) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = "sine";
+          osc.frequency.value = f;
+          gain.gain.setValueAtTime(g, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 1.6);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(now);
+          osc.stop(now + 1.7);
+        });
+      }
+      function ringBellFor(seconds) {
+        const strikes = Math.ceil((seconds * 1000) / 1800);
+        for (let i = 0; i < strikes; i++) {
+          setTimeout(playBellChime, i * 1800);
+        }
+      }
+
+      let timerEndBellRung = false;
+      function checkTimerEndBell(remaining) {
+        if (!adminTimerActive || remaining > 0) {
+          timerEndBellRung = false;
+          return;
+        }
+        if (timerEndBellRung) return;
+        timerEndBellRung = true;
+        ringBellFor(10);
       }
 
       function renderTimerStatus() {
