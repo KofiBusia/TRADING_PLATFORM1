@@ -2461,6 +2461,109 @@
         if (!adminTimerActive || adminTimerRemaining === null) return;
         adminTimerRemaining = Math.max(0, adminTimerRemaining - 1);
         renderTimerStatus();
+        speakCountdown(adminTimerRemaining);
+      }
+
+      // ===== VOICE COUNTDOWN (final 10s of the session timer) =====
+      // Chrome only allows the first speechSynthesis.speak()/AudioContext
+      // sound once the page has a user gesture on record - the countdown
+      // itself fires from a setInterval tick, which doesn't count, so
+      // "unlock" both silently on whatever the admin clicks first (their
+      // own interaction, not this one). Without this, the countdown can
+      // silently fail to make any sound at all.
+      let audioPrimed = false;
+      let sharedAudioCtx = null;
+      function primeSpeechSynthesis() {
+        if (audioPrimed) return;
+        audioPrimed = true;
+        if ("speechSynthesis" in window) {
+          try {
+            const u = new SpeechSynthesisUtterance("");
+            u.volume = 0;
+            window.speechSynthesis.speak(u);
+          } catch (e) {}
+        }
+        try {
+          sharedAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        } catch (e) {}
+      }
+      document.addEventListener("click", primeSpeechSynthesis, { once: true });
+
+      // Countdown numbers are QUEUED, never cancelled mid-tick: Windows/Mac
+      // TTS engines take a couple hundred ms just to start producing audio,
+      // so calling speechSynthesis.cancel() on every 1s tick (to keep things
+      // "crisp") was killing each number before it ever became audible -
+      // only the very last utterance in a burst was ever actually heard.
+      function speakCountdownNumber(text, rate) {
+        if (!("speechSynthesis" in window)) return;
+        try {
+          const utter = new SpeechSynthesisUtterance(text);
+          const voice = pickCountdownVoice();
+          if (voice) utter.voice = voice;
+          utter.pitch = 1.15;
+          utter.rate = rate;
+          window.speechSynthesis.speak(utter);
+        } catch (e) {}
+      }
+      function pickCountdownVoice() {
+        const voices = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
+        const femalePattern = /female|zira|susan|samantha|victoria|karen|moira|tessa|fiona|serena|hazel|linda|eva|salli|joanna|kendra|kimberly|ivy|aria/i;
+        return (
+          voices.find((v) => femalePattern.test(v.name)) ||
+          voices.find((v) => /^en/i.test(v.lang)) ||
+          voices[0] ||
+          null
+        );
+      }
+
+      // A synthesized bell chime (fundamental + two overtones, quick decay)
+      // so "time's up" doesn't need a hosted audio file - struck repeatedly
+      // for ~10s once the timer hits zero.
+      function playBellChime() {
+        const ctx = sharedAudioCtx;
+        if (!ctx) return;
+        if (ctx.state === "suspended") ctx.resume().catch(() => {});
+        const now = ctx.currentTime;
+        const partials = [{ f: 880, g: 0.35 }, { f: 1320, g: 0.18 }, { f: 1760, g: 0.1 }];
+        partials.forEach(({ f, g }) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = "sine";
+          osc.frequency.value = f;
+          gain.gain.setValueAtTime(g, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 1.4);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(now);
+          osc.stop(now + 1.5);
+        });
+      }
+      function ringBellFor(seconds) {
+        const strikes = Math.ceil((seconds * 1000) / 1800);
+        for (let i = 0; i < strikes; i++) {
+          setTimeout(playBellChime, i * 1800);
+        }
+      }
+
+      let lastSpokenCountdownSecond = null;
+      let timesUpAnnounced = false;
+      function speakCountdown(remaining) {
+        if (!adminTimerActive || remaining > 10) {
+          lastSpokenCountdownSecond = null;
+          timesUpAnnounced = false;
+          return;
+        }
+        if (remaining < 0 || remaining === lastSpokenCountdownSecond) return;
+        lastSpokenCountdownSecond = remaining;
+
+        if (remaining === 0) {
+          if (timesUpAnnounced) return;
+          timesUpAnnounced = true;
+          speakCountdownNumber("Time's up!", 1.05);
+          ringBellFor(10);
+          return;
+        }
+        speakCountdownNumber(String(remaining), 1.15);
       }
 
       function renderTimerStatus() {
