@@ -2507,9 +2507,31 @@
         audioPrimed = true;
         try {
           sharedAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          keepAudioContextAlive();
         } catch (e) {}
       }
       document.addEventListener("click", primeAudio, { once: true });
+
+      // Chrome auto-suspends an AudioContext after ~30s with no active
+      // audio graph - and a session timer typically runs for minutes
+      // before hitting zero, all silent since the bell is the only sound.
+      // Resuming a suspended context from a non-gesture callback (the
+      // timer's own tick) isn't reliably allowed, so instead of letting it
+      // go idle and hoping to wake it later, an inaudible tone keeps it
+      // perpetually active for as long as the page is open.
+      function keepAudioContextAlive() {
+        const ctx = sharedAudioCtx;
+        if (!ctx) return;
+        try {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          gain.gain.value = 0.00001;
+          osc.frequency.value = 20; // below human hearing
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start();
+        } catch (e) {}
+      }
 
       function playBellChime() {
         const ctx = sharedAudioCtx;
