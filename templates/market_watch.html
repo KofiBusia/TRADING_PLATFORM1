@@ -141,6 +141,30 @@
       .pulse-value.dn { color: var(--red); }
       .pulse-sub { font-size: 10px; color: var(--gray); margin-top: 2px; }
 
+      /* ===== TOP MOVERS ===== */
+      .mw-movers {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 1px;
+        background: var(--border);
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
+      }
+      .mv-card { background: var(--navy-mid); padding: 14px 16px 6px; }
+      .mv-card-title { font-size: 10px; font-weight: 800; letter-spacing: 1.3px; text-transform: uppercase; color: var(--gray); margin-bottom: 8px; }
+      .mv-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.04); cursor: pointer; }
+      .mv-row:last-child { border-bottom: none; }
+      .mv-row:hover .mv-sym { color: var(--sky); }
+      .mv-rank { width: 14px; font-size: 9.5px; color: var(--gray); font-weight: 700; flex-shrink: 0; }
+      .mv-sym { font-weight: 800; font-size: 12px; flex-shrink: 0; transition: color 0.12s; }
+      .mv-name { font-size: 9.5px; color: var(--gray); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .mv-metric { margin-left: auto; font-family: "JetBrains Mono", monospace; font-size: 11px; text-align: right; flex-shrink: 0; padding-left: 6px; }
+      .mv-metric.up { color: var(--green); }
+      .mv-metric.dn { color: var(--red); }
+      .mv-empty-mini { font-size: 10.5px; color: var(--gray); padding: 6px 0 10px; }
+      @media (max-width: 980px) { .mw-movers { grid-template-columns: repeat(2, 1fr); } }
+      @media (max-width: 640px) { .mw-movers { grid-template-columns: 1fr; } }
+
       /* ===== BODY ===== */
       .mw-body { flex: 1; display: grid; grid-template-columns: 420px 1fr; gap: 1px; background: var(--border); }
       @media (max-width: 980px) { .mw-body { grid-template-columns: 1fr; } }
@@ -274,6 +298,25 @@
       <div class="pulse-tile"><div class="pulse-label">Unchanged</div><div class="pulse-value" id="p-flat">—</div><div class="pulse-sub">flat vs session open</div></div>
       <div class="pulse-tile"><div class="pulse-label">Market Demand</div><div class="pulse-value" id="p-demand">—</div><div class="pulse-sub">avg. bid-side pressure</div></div>
       <div class="pulse-tile"><div class="pulse-label">Leading Sector</div><div class="pulse-value" id="p-sector" style="font-size:15px;">—</div><div class="pulse-sub" id="p-sector-sub">by avg. change</div></div>
+    </div>
+
+    <div class="mw-movers">
+      <div class="mv-card">
+        <div class="mv-card-title">Top 5 · Volume Traded</div>
+        <div class="mv-list" id="mv-volume"></div>
+      </div>
+      <div class="mv-card">
+        <div class="mv-card-title">Top 5 · Value Traded</div>
+        <div class="mv-list" id="mv-value"></div>
+      </div>
+      <div class="mv-card">
+        <div class="mv-card-title">Biggest Gainers</div>
+        <div class="mv-list" id="mv-gainers"></div>
+      </div>
+      <div class="mv-card">
+        <div class="mv-card-title">Biggest Losers</div>
+        <div class="mv-list" id="mv-losers"></div>
+      </div>
     </div>
 
     <div class="mw-body">
@@ -430,6 +473,48 @@
             </div>`;
           })
           .join("");
+      }
+
+      function renderMoversList(elId, items, metricFn) {
+        const el = document.getElementById(elId);
+        if (!items || !items.length) {
+          el.innerHTML = `<div class="mv-empty-mini">No trades yet this session.</div>`;
+          return;
+        }
+        el.innerHTML = items
+          .map((it, i) => {
+            const m = metricFn(it);
+            return `<div class="mv-row" onclick="selectStock('${it.symbol}')" title="${it.name}">
+              <span class="mv-rank">${i + 1}</span>
+              <span class="mv-sym">${it.symbol}</span>
+              <span class="mv-metric ${m.cls}">${m.text}</span>
+            </div>`;
+          })
+          .join("");
+      }
+
+      async function fetchMovers() {
+        try {
+          const r = await fetch("/api/market_watch/movers");
+          if (!r.ok) return;
+          const d = await r.json();
+          renderMoversList("mv-volume", d.top_volume, (it) => ({
+            text: fmtInt(it.volume) + " sh",
+            cls: "",
+          }));
+          renderMoversList("mv-value", d.top_value, (it) => ({
+            text: fmtMoney(it.value),
+            cls: "",
+          }));
+          renderMoversList("mv-gainers", d.gainers, (it) => ({
+            text: (it.change_pct >= 0 ? "▲ +" : "▼ ") + Math.abs(it.change_pct).toFixed(2) + "%",
+            cls: it.change_pct >= 0 ? "up" : "dn",
+          }));
+          renderMoversList("mv-losers", d.losers, (it) => ({
+            text: (it.change_pct >= 0 ? "▲ +" : "▼ ") + Math.abs(it.change_pct).toFixed(2) + "%",
+            cls: it.change_pct >= 0 ? "up" : "dn",
+          }));
+        } catch (e) {}
       }
 
       function selectStock(symbol) {
@@ -634,9 +719,10 @@
 
       async function init() {
         await fetchOverview();
-        await fetchDepth();
+        await Promise.all([fetchDepth(), fetchMovers()]);
         setInterval(fetchOverview, 10000);
         setInterval(fetchDepth, 5000);
+        setInterval(fetchMovers, 15000);
         setInterval(updateHeader, 1000);
       }
       init();

@@ -768,6 +768,60 @@ def api_market_watch_depth(symbol):
     return jsonify(payload)
 
 
+@app.route("/api/market_watch/movers")
+def api_market_watch_movers():
+    if "user_id" not in session:
+        return jsonify({"error": "Not authenticated"}), 401
+
+    # Volume/value traded are real, not synthetic - summed from every
+    # buy/sell/stop-loss/target transaction across every trader's
+    # portfolio, keyed by symbol.
+    volume_by_symbol = {}
+    value_by_symbol = {}
+    with user_lock:
+        for u in users.values():
+            for tx in u["portfolio"].get("transactions", []):
+                sym = tx.get("symbol")
+                if not sym:
+                    continue
+                volume_by_symbol[sym] = volume_by_symbol.get(sym, 0) + abs(tx.get("shares", 0))
+                value_by_symbol[sym] = value_by_symbol.get(sym, 0) + abs(tx.get("total", 0))
+
+    with stock_lock:
+        by_symbol = {s["symbol"]: s for s in stocks}
+        movers = []
+        for s in stocks:
+            history = s.get("history", [])
+            first = history[0]["price"] if history else s["price"]
+            change_pct = round(((s["price"] - first) / first) * 100, 2) if first else 0.0
+            movers.append({
+                "symbol": s["symbol"],
+                "name": s["name"],
+                "price": s["price"],
+                "change_pct": change_pct,
+            })
+
+    top_volume = [
+        {"symbol": sym, "name": by_symbol[sym]["name"], "price": by_symbol[sym]["price"], "volume": vol}
+        for sym, vol in sorted(volume_by_symbol.items(), key=lambda kv: kv[1], reverse=True)[:5]
+        if sym in by_symbol
+    ]
+    top_value = [
+        {"symbol": sym, "name": by_symbol[sym]["name"], "price": by_symbol[sym]["price"], "value": round(val, 2)}
+        for sym, val in sorted(value_by_symbol.items(), key=lambda kv: kv[1], reverse=True)[:5]
+        if sym in by_symbol
+    ]
+    gainers = sorted(movers, key=lambda m: m["change_pct"], reverse=True)[:5]
+    losers = sorted(movers, key=lambda m: m["change_pct"])[:5]
+
+    return jsonify({
+        "top_volume": top_volume,
+        "top_value": top_value,
+        "gainers": gainers,
+        "losers": losers,
+    })
+
+
 @app.route("/api/price_engine_status")
 def get_price_engine_status():
     status = dict(price_engine_status)
