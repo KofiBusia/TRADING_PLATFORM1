@@ -1638,6 +1638,78 @@
           grid-template-columns: 1fr;
         }
       }
+
+      /* ===== MARKET CLOSED OVERLAY ===== */
+      .market-closed-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 99999;
+        background: rgba(8, 3, 3, 0.94);
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        text-align: center;
+        padding: 20px;
+      }
+      .market-closed-overlay.show {
+        display: flex;
+      }
+      .mco-icon {
+        font-size: 64px;
+        margin-bottom: 18px;
+        animation: mco-blink 1s infinite;
+      }
+      .mco-title {
+        font-family: "Barlow Condensed", sans-serif;
+        font-size: 56px;
+        font-weight: 900;
+        letter-spacing: 4px;
+        color: var(--red);
+        text-transform: uppercase;
+        animation: mco-blink 1s infinite;
+        text-shadow: 0 0 40px rgba(230, 51, 41, 0.65);
+      }
+      @media (max-width: 640px) {
+        .mco-title {
+          font-size: 34px;
+          letter-spacing: 2px;
+        }
+        .mco-icon {
+          font-size: 44px;
+        }
+      }
+      @keyframes mco-blink {
+        0%,
+        49% {
+          opacity: 1;
+        }
+        50%,
+        100% {
+          opacity: 0.2;
+        }
+      }
+      .mco-sub {
+        font-size: 16px;
+        color: var(--gray-light);
+        margin-top: 14px;
+      }
+      .mco-dismiss {
+        margin-top: 32px;
+        padding: 12px 34px;
+        border-radius: 8px;
+        border: none;
+        background: var(--sky);
+        color: #06131f;
+        font-weight: 800;
+        font-size: 13px;
+        cursor: pointer;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+      .mco-dismiss:hover {
+        filter: brightness(1.1);
+      }
     </style>
   </head>
   <body>
@@ -2362,6 +2434,21 @@
         if (timerEndBellRung) return;
         timerEndBellRung = true;
         ringBellFor(10);
+        showMarketClosedOverlay();
+      }
+
+      // The server closes the market itself the instant the countdown
+      // hits zero (see _close_market_when_timer_expires in app.py) - this
+      // is purely the visible announcement, shown the moment this tab
+      // notices the same zero, not waiting on a round trip to confirm it.
+      function showMarketClosedOverlay() {
+        const el = document.getElementById("market-closed-overlay");
+        if (!el) return;
+        el.classList.add("show");
+        setTimeout(() => el.classList.remove("show"), 20000);
+      }
+      function dismissMarketClosedOverlay() {
+        document.getElementById("market-closed-overlay")?.classList.remove("show");
       }
 
       function renderSessionTimer(remaining) {
@@ -3310,5 +3397,12 @@
 
       init();
     </script>
+
+    <div class="market-closed-overlay" id="market-closed-overlay">
+      <div class="mco-icon">🔔</div>
+      <div class="mco-title">Market Closed</div>
+      <div class="mco-sub">The trading session has ended.</div>
+      <button class="mco-dismiss" onclick="dismissMarketClosedOverlay()">Dismiss</button>
+    </div>
   </body>
 </html>

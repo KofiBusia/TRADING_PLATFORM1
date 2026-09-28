@@ -1409,6 +1409,25 @@ DEFAULT_SESSION_TIMER_DURATION = 600  # 10 minutes
 session_timer = {"active": False, "start_time": None, "duration": DEFAULT_SESSION_TIMER_DURATION}
 
 
+@app.before_request
+def _close_market_when_timer_expires():
+    """Closes the market the moment the admin-set countdown reaches zero -
+    server-side and on every request, not client-triggered, so the round
+    actually ends even if no browser tab happens to be open when the timer
+    runs out. Fires exactly once per timer run: flips session_timer
+    inactive in the same breath as market_open, so the guard above can't
+    re-trigger a close on the next request (e.g. after the admin manually
+    reopens the market without restarting the timer)."""
+    global market_open
+    if not session_timer["active"] or not session_timer["start_time"]:
+        return
+    elapsed = time.time() - session_timer["start_time"]
+    if elapsed >= session_timer["duration"]:
+        market_open = False
+        session_timer["active"] = False
+        session_timer["start_time"] = None
+
+
 @app.route("/api/timer")
 def get_session_timer():
     remaining = 0
